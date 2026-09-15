@@ -1,13 +1,23 @@
 import Foundation
-import GitHubViewerCore
 import SwiftUI
 
 @MainActor
 final class ViewerModel: ObservableObject {
     // 入力
     @Published var urlText: String = ""
-    @Published var token: String = ProcessInfo.processInfo.environment["GITHUB_TOKEN"] ?? ""
+    @Published var token: String = ""
     @Published var mode: DisplayMode = .auto { didSet { refreshRendering() } }
+
+    /// 拡張子による判定を上書きして、別の言語として実行したいときに使う。
+    @Published var languageOverrideID: String?
+    /// 実行サービスにソースを送って実行してよいか。
+    @Published var allowsRemoteExecution: Bool = false
+    /// どの実行サービスを使うか。
+    @Published var executionBackend: ExecutionBackend = .wandbox
+    /// Piston を使う場合のエンドポイント (自前ホストしたものを指定できる)。
+    @Published var pistonEndpointText: String = CodeRunner.defaultPistonEndpoint.absoluteString
+    /// サーバー実行に渡す標準入力。
+    @Published var stdin: String = ""
 
     // 取得結果
     @Published private(set) var listing: DirectoryListing?
@@ -23,8 +33,19 @@ final class ViewerModel: ObservableObject {
     @Published private(set) var reloadToken: Int = 0
     @Published private(set) var consoleLines: [String] = []
 
+    // 実行
+    @Published private(set) var isRunning = false
+    @Published private(set) var executionOutput: ExecutionOutput?
+    /// 実行結果 (サンドボックスページ) を表示中かどうか。
+    @Published private(set) var isShowingRunResult = false
+
+    private let codeRunner = CodeRunner()
     private var history: [GitHubTarget] = []
     private var currentTarget: GitHubTarget?
+
+    init() {
+        token = ProcessInfo.processInfo.environment["GITHUB_TOKEN"] ?? ""
+    }
 
     var canGoBack: Bool { history.count > 1 }
 
@@ -33,11 +54,31 @@ final class ViewerModel: ObservableObject {
         return mode.resolved(for: file.kind)
     }
 
-    var currentBaseURL: URL? { file?.baseURL }
+    var currentBaseURL: URL? { isShowingRunResult ? nil : file?.baseURL }
 
-    var parentEntryTitle: String? {
-        guard let location = listing?.location ?? fileLocation, location.parent != nil else { return nil }
-        return ".."
+    var canGoUp: Bool { (listing?.location ?? fileLocation)?.parent != nil }
+
+    /// 拡張子 (または手動指定) から決まる言語。
+    var language: ProgrammingLanguage? {
+        if let languageOverrideID { return LanguageCatalog.language(id: languageOverrideID) }
+        guard let file else { return nil }
+        return LanguageCatalog.language(forFileName: file.name)
+    }
+
+    /// 現在のファイルをどう実行するか。
+    var executionPlan: ExecutionPlan {
+        guard let file else { return .unavailable(reason: "ファイルが開かれていません") }
+        if let languageOverrideID, let language = LanguageCatalog.language(id: languageOverrideID) {
+            return LanguageCatalog.plan(for: language, allowsRemoteExecution: allowsRemoteExecution)
+        }
+        return LanguageCatalog.plan(kind: file.kind,
+                                    fileName: file.name,
+                                    allowsRemoteExecution: allowsRemoteExecution)
+    }
+
+    var canRun: Bool {
+        if case .unavailable = executionPlan { return false }
+        return file != nil && !isRunning
     }
 
     private var fileLocation: GitHubLocation? {
@@ -71,8 +112,7 @@ final class ViewerModel: ObservableObject {
     }
 
     func goUp() {
-        let location = listing?.location ?? fileLocation
-        guard let parent = location?.parent else { return }
+        guard let parent = (listing?.location ?? fileLocation)?.parent else { return }
         Task { await load(.repository(parent)) }
     }
 
@@ -92,6 +132,9 @@ final class ViewerModel: ObservableObject {
         isLoading = true
         errorMessage = nil
         consoleLines.removeAll()
+        executionOutput = nil
+        isShowingRunResult = false
+        languageOverrideID = nil
         statusText = "読み込み中…"
         defer { isLoading = false }
 
@@ -110,10 +153,11 @@ final class ViewerModel: ObservableObject {
                 self.renderedHTML = HTMLDocumentBuilder.page(
                     title: listing.title,
                     body: "<article class=\"markdown-body\"><h1>\(MarkdownRenderer.escape(listing.title))</h1>"
-                        + "<p>左の一覧からファイルを選ぶと、その内容を表示・実行します。</p></article>")
+                        + "<p>一覧からファイルを選ぶと、その内容を表示・実行します。</p></article>")
                 statusText = "\(listing.title) — \(listing.entries.count) 項目"
-                // README があれば自動で開く。
-                if let readme = listing.entries.first(where: { !$0.isDirectory && $0.name.lowercased().hasPrefix("readme") }) {
+                if let readme = listing.entries.first(where: {
+                    !$0.isDirectory && $0.name.lowercased().hasPrefix("readme")
+                }) {
                     openEntry(readme)
                 }
 
@@ -136,6 +180,7 @@ final class ViewerModel: ObservableObject {
     /// 現在のモードとソースから WebView に渡す HTML を作り直す。
     func refreshRendering() {
         guard let file else { return }
+        isShowingRunResult = false
         let title = file.name
         switch resolvedMode {
         case .web:
@@ -149,11 +194,56 @@ final class ViewerModel: ObservableObject {
         }
     }
 
-    /// 編集したソースを再実行する。
+    // MARK: - 実行
+
+    /// 現在のソースを、言語に応じた方法で実行する。
     func run() {
+        guard let file else { return }
         consoleLines.removeAll()
-        refreshRendering()
-        reloadToken += 1
+        errorMessage = nil
+        executionOutput = nil
+
+        switch executionPlan {
+        case .browser:
+            if mode == .auto || mode == .web {
+                renderedHTML = HTMLDocumentBuilder.executable(html: source, title: file.name)
+                isShowingRunResult = false
+            } else {
+                refreshRendering()
+            }
+            reloadToken += 1
+            statusText = "WebView で実行しました。"
+
+        case .local(let engine, let language):
+            renderedHTML = SandboxPageBuilder.page(engine: engine, source: source, fileName: file.name)
+            isShowingRunResult = true
+            reloadToken += 1
+            statusText = "\(language.name) を端末内で実行中…"
+
+        case .remote(let spec, let language):
+            isRunning = true
+            statusText = "\(language.name) を \(executionBackend.displayName) に送信中…"
+            let source = self.source
+            let stdin = self.stdin
+            let backend = executionBackend
+            let endpoint = URL(string: pistonEndpointText) ?? CodeRunner.defaultPistonEndpoint
+            Task { [codeRunner] in
+                do {
+                    let output = try await codeRunner.run(spec: spec, source: source, stdin: stdin,
+                                                          backend: backend, pistonEndpoint: endpoint)
+                    self.executionOutput = output
+                    self.statusText = "実行完了: \(output.languageVersion)"
+                        + (output.exitCode.map { " (終了コード \($0))" } ?? "")
+                } catch {
+                    self.errorMessage = error.localizedDescription
+                    self.statusText = "実行に失敗しました。"
+                }
+                self.isRunning = false
+            }
+
+        case .unavailable(let reason):
+            errorMessage = reason
+        }
     }
 
     func appendLog(_ line: String) {
@@ -161,21 +251,9 @@ final class ViewerModel: ObservableObject {
         if consoleLines.count > 500 { consoleLines.removeFirst(consoleLines.count - 500) }
     }
 
-    func clearLog() { consoleLines.removeAll() }
-
-    /// 現在の内容をブラウザで開けるよう一時ファイルに書き出す。
-    func exportHTMLToTemporaryFile() -> URL? {
-        guard !renderedHTML.isEmpty else { return nil }
-        let name = (file?.name as NSString?)?.deletingPathExtension ?? "preview"
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("GitHubViewer-\(name)-\(UUID().uuidString.prefix(8)).html")
-        do {
-            try renderedHTML.write(to: url, atomically: true, encoding: .utf8)
-            return url
-        } catch {
-            errorMessage = error.localizedDescription
-            return nil
-        }
+    func clearLog() {
+        consoleLines.removeAll()
+        executionOutput = nil
     }
 
     var githubPageURL: URL? { file?.htmlURL }

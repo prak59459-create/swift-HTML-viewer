@@ -264,8 +264,7 @@ public struct GitHubClient {
         if let accept { request.setValue(accept, forHTTPHeaderField: "Accept") }
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
 
-        let (data, response) = try await send(request)
-        guard let http = response as? HTTPURLResponse else { throw GitHubClientError.badResponse }
+        let (data, http) = try await HTTP.send(request, session: session)
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 403 || http.statusCode == 429,
                http.value(forHTTPHeaderField: "x-ratelimit-remaining") == "0" {
@@ -281,22 +280,6 @@ public struct GitHubClient {
     private func apiMessage(from data: Data) -> String? {
         struct APIError: Decodable { let message: String }
         return (try? JSONDecoder().decode(APIError.self, from: data))?.message
-    }
-
-    /// Linux 版 Foundation でも動くように、コールバック API を async でラップする。
-    private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        try await withCheckedThrowingContinuation { continuation in
-            let task = session.dataTask(with: request) { data, response, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else if let data, let response {
-                    continuation.resume(returning: (data, response))
-                } else {
-                    continuation.resume(throwing: GitHubClientError.badResponse)
-                }
-            }
-            task.resume()
-        }
     }
 }
 

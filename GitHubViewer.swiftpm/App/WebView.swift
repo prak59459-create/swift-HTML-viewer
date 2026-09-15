@@ -1,18 +1,18 @@
 import SwiftUI
 import WebKit
 
-/// HTML を実行して表示する WKWebView のラッパー。
-/// ページ内の `console.log` と実行時エラーはコンソールペインに転送する。
-struct WebView: NSViewRepresentable {
+/// HTML を実行して表示する WKWebView のラッパー (iPadOS / iOS)。
+/// ページ内の `console.log` と実行時エラーは出力ペインに転送する。
+struct WebView: UIViewRepresentable {
     let html: String
     let baseURL: URL?
-    /// 同じ HTML でも再読み込みしたいときに変える値 (「実行」ボタン)。
+    /// 同じ HTML でも読み込み直したいときに変える値 (「実行」ボタン)。
     let reloadToken: Int
     var onLog: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onLog: onLog) }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeUIView(context: Context) -> WKWebView {
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: Coordinator.handlerName)
         controller.addUserScript(WKUserScript(source: Self.consoleBridge,
@@ -22,13 +22,16 @@ struct WebView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = controller
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.allowsInlineMediaPlayback = true
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        webView.isOpaque = false
+        webView.scrollView.keyboardDismissMode = .interactive
         return webView
     }
 
-    func updateNSView(_ webView: WKWebView, context: Context) {
+    func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.onLog = onLog
         let signature = "\(reloadToken)\u{0001}\(baseURL?.absoluteString ?? "")\u{0001}\(html.hashValue)"
         guard context.coordinator.lastSignature != signature else { return }
@@ -36,7 +39,7 @@ struct WebView: NSViewRepresentable {
         webView.loadHTMLString(html, baseURL: baseURL)
     }
 
-    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.handlerName)
     }
 
@@ -58,11 +61,11 @@ struct WebView: NSViewRepresentable {
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            // ページ内のリンククリックは既定のブラウザで開く (ビューアの表示は保つ)。
+            // ページ内のリンクをタップしたときは Safari で開く (ビューアの表示は保つ)。
             if navigationAction.navigationType == .linkActivated,
                let url = navigationAction.request.url,
                url.scheme == "http" || url.scheme == "https" {
-                NSWorkspace.shared.open(url)
+                UIApplication.shared.open(url)
                 decisionHandler(.cancel)
                 return
             }
@@ -70,6 +73,10 @@ struct WebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            onLog("error: \(error.localizedDescription)")
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             onLog("error: \(error.localizedDescription)")
         }
     }

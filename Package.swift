@@ -1,29 +1,23 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// アプリ本体 (SwiftUI + WebKit) は macOS 専用。
-// ロジック部分の GitHubViewerCore は Linux でもビルド・テストできるようにしておく。
-var products: [Product] = [
-    .library(name: "GitHubViewerCore", targets: ["GitHubViewerCore"]),
-]
-
-var targets: [Target] = [
-    .target(name: "GitHubViewerCore", path: "Sources/GitHubViewerCore"),
-    .testTarget(name: "GitHubViewerCoreTests",
-                dependencies: ["GitHubViewerCore"],
-                path: "Tests/GitHubViewerCoreTests"),
-]
-
-#if os(macOS)
-products.append(.executable(name: "GitHubViewer", targets: ["GitHubViewer"]))
-targets.append(.executableTarget(name: "GitHubViewer",
-                                 dependencies: ["GitHubViewerCore"],
-                                 path: "Sources/GitHubViewer"))
-#endif
-
+// アプリ本体は iPad の Swift Playgrounds で開ける App Project
+// (GitHubViewer.swiftpm) として用意してある。
+//
+// このルートの Package.swift は、その中の Core/ にあるロジックを
+// macOS / Linux でもビルド・テストするためのもの。
+// (Swift Playgrounds はサブディレクトリの .swiftpm を直接開くので、
+//  この Package.swift はアプリのビルドには関与しない)
 let package = Package(
-    name: "GitHubViewer",
-    platforms: [.macOS(.v13)],
-    products: products,
-    targets: targets
+    name: "GitHubViewerCore",
+    platforms: [.macOS(.v12), .iOS(.v16)],
+    products: [
+        .library(name: "GitHubViewerCore", targets: ["GitHubViewerCore"]),
+    ],
+    targets: [
+        .target(name: "GitHubViewerCore", path: "GitHubViewer.swiftpm/Core"),
+        .testTarget(name: "GitHubViewerCoreTests",
+                    dependencies: ["GitHubViewerCore"],
+                    path: "Tests/GitHubViewerCoreTests"),
+    ]
 )
