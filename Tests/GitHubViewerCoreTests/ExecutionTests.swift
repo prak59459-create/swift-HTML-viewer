@@ -22,17 +22,26 @@ final class LanguageCatalogTests: XCTestCase {
         XCTAssertEqual(language.id, "python")
     }
 
+    func testCUsesTheBuiltInCompiler() {
+        // C はアプリ内蔵のコンパイラで動くので、サーバーを許可していなくても実行できる。
+        let plan = LanguageCatalog.plan(kind: .code(language: "c"), fileName: "main.c",
+                                        allowsRemoteExecution: false)
+        guard case .builtin(let compiler, let language) = plan else { return XCTFail("\(plan)") }
+        XCTAssertEqual(compiler, .miniC)
+        XCTAssertEqual(language.id, "c")
+    }
+
     func testCompiledLanguageNeedsServer() {
-        let denied = LanguageCatalog.plan(kind: .code(language: "c"), fileName: "main.c",
+        let denied = LanguageCatalog.plan(kind: .code(language: "rust"), fileName: "main.rs",
                                           allowsRemoteExecution: false)
         guard case .unavailable = denied else { return XCTFail("\(denied)") }
 
-        let allowed = LanguageCatalog.plan(kind: .code(language: "c"), fileName: "main.c",
+        let allowed = LanguageCatalog.plan(kind: .code(language: "rust"), fileName: "main.rs",
                                            allowsRemoteExecution: true)
         guard case .remote(let spec, _) = allowed else { return XCTFail("\(allowed)") }
-        XCTAssertEqual(spec.pistonLanguage, "c")
-        XCTAssertEqual(spec.wandboxLanguage, "C")
-        XCTAssertEqual(spec.fileName, "main.c")
+        XCTAssertEqual(spec.pistonLanguage, "rust")
+        XCTAssertEqual(spec.wandboxLanguage, "Rust")
+        XCTAssertEqual(spec.fileName, "main.rs")
     }
 
     func testUnknownExtensionIsNotRunnable() {

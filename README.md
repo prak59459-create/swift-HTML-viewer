@@ -1,6 +1,8 @@
 # GitHub Viewer (iPad / iPhone)
 
-GitHub のリンクを貼り付けると、その中身を **HTML として実行** したり、**Python や C などのプログラムとして実行** したり、Markdown・ソース・画像として表示できる iPadOS / iOS アプリです。
+GitHub のリンクを貼り付けると、その中身を **HTML として実行** したり、**C や Python のプログラムとして実行** したり、Markdown・ソース・画像として表示できる iPadOS / iOS アプリです。
+
+**C コンパイラは自作のものをアプリに内蔵しています** (字句解析 → 構文解析 → 型検査 → バイトコード生成 → 仮想マシン)。サーバーにも外部サービスにも頼らず、iPad の中だけで C をコンパイルして動かせます → [docs/MiniC.md](docs/MiniC.md)
 
 **iPad の Swift Playgrounds でそのまま開いて実行できる App Project (`.swiftpm`)** として作ってあります。Mac や Xcode は必要ありません。
 
@@ -29,13 +31,14 @@ https://github.com/prak59459-create/swift-html-viewer/tree/main/Examples
 | `Examples/demo.html` | WebView でそのまま実行 (JavaScript も動く) |
 | `Examples/demo.py` | Pyodide (端末内) |
 | `Examples/demo.sql` | sql.js / SQLite (端末内) |
-| `Examples/demo.c` | 実行サービスでコンパイル (設定で許可が必要) |
+| `Examples/demo.c` | **内蔵 C コンパイラ** (端末内、設定不要) |
+| `Examples/c/*.c` | 内蔵 C コンパイラ (GCC と出力を突き合わせた 30 本) |
 
 ## できること
 
 - **URL を貼るだけ** — `https://github.com/owner/repo/blob/main/index.html` のようなページ URL をそのまま入力できます。
 - **HTML / SVG をその場で実行** — WKWebView で描画するので CSS も JavaScript も動きます。
-- **他の言語も実行** — 拡張子から言語を判定し、端末内のランタイムか実行サービスで動かします (下表)。
+- **他の言語も実行** — 拡張子から言語を判定し、内蔵の C コンパイラ・WebView のランタイム・実行サービスのいずれかで動かします (下表)。
 - **Markdown を整形表示 / ソース・画像表示** — README は GitHub 風に、画像はそのまま表示します。
 - **表示方法の切り替え** — 「自動 / HTML として実行 / Markdown / ソース / 画像」を手動で選べます。
 - **その場で編集して再実行** — 「編集」でソースを書き換え、「実行」(⌘R) で反映されます。
@@ -56,9 +59,19 @@ https://github.com/prak59459-create/swift-html-viewer/tree/main/Examples
 
 ## 対応言語と実行方法
 
-iPadOS ではネイティブのコンパイラをアプリに同梱できない (実行時のコード生成が許可されていない) ため、次の 2 通りで実行します。
+iPadOS ではネイティブのコンパイラを同梱できない (実行時のコード生成が許可されていない) ため、次の 3 通りで実行します。
 
-### 1. 端末内で実行 — コードは外に出ません
+### 1. 内蔵コンパイラで実行 — ネットワークすら使いません
+
+| 言語 | 実装 |
+| --- | --- |
+| C | 自作のコンパイラ + バイトコード仮想マシン ([docs/MiniC.md](docs/MiniC.md)) |
+
+C89/C99 の実用的な部分 (構造体・ポインタ・配列・`malloc`・`printf`・再帰など) に対応し、
+コンパイルエラーは行と桁つき、実行時エラー (NULL 参照、0 除算、無限ループ) も安全に止めて報告します。
+ツールバーの「逆アセンブル」で、生成されたバイトコードも読めます。
+
+### 2. WebView のランタイムで実行 — コードは外に出ません
 
 WebView に WebAssembly / JavaScript 実装のランタイムを読み込んで実行します (読み込みのためのネットワークは必要)。
 
@@ -71,9 +84,9 @@ WebView に WebAssembly / JavaScript 実装のランタイムを読み込んで�
 | Lua | Fengari |
 | SQL | sql.js (SQLite の WebAssembly ビルド) |
 
-### 2. 実行サービスでコンパイル・実行 — 設定で許可したときだけ
+### 3. 実行サービスでコンパイル・実行 — 設定で許可したときだけ
 
-C / C++ / Objective-C / Swift / Java / Kotlin / C# / Go / Rust / PHP / Perl / Shell / Haskell / Scala / Dart / Elixir / Erlang / Nim / Zig / Pascal / D / R / Julia / OCaml / Crystal / Groovy / Lisp
+C++ / Objective-C / Swift / Java / Kotlin / C# / Go / Rust / PHP / Perl / Shell / Haskell / Scala / Dart / Elixir / Erlang / Nim / Zig / Pascal / D / R / Julia / OCaml / Crystal / Groovy / Lisp (C もここから選べます)
 
 - 既定は **Wandbox** (`https://wandbox.org/api`) で、登録不要で使えます。
 - **Piston** も選べます。公開インスタンス (`emkc.org`) は 2026 年 2 月からホワイトリスト制なので、[自分で立てた Piston](https://github.com/engineer-man/piston) の URL を設定で指定してください。
@@ -98,6 +111,17 @@ GitHubViewer.swiftpm/        ← Swift Playgrounds で開く App Project
     ViewerModel.swift          状態管理
     WebView.swift              WKWebView ラッパー (console ブリッジ付き)
   Core/                      ロジック (UI 非依存)
+    MiniC/                     自作の C コンパイラと仮想マシン
+      Lexer.swift                字句解析
+      Preprocessor.swift         #define / #ifdef
+      Parser.swift               構文解析 (再帰下降)
+      AST.swift / CType.swift    構文木と型
+      Compiler.swift             型検査 + バイトコード生成
+      Bytecode.swift             命令セットと逆アセンブラ
+      VM.swift                   スタックマシン (メモリ・malloc・実行制限)
+      Builtins.swift             printf などの標準ライブラリ
+      Diagnostics.swift          エラー表示 (行・桁・キャレット)
+      MiniC.swift                窓口 (compile / execute / disassemble)
     GitHubTarget.swift         URL 解析 (github.com / raw / gist / 省略形)
     GitHubClient.swift         GitHub REST API からの取得
     ContentKind.swift          拡張子と中身からの表示種別判定
@@ -109,19 +133,25 @@ GitHubViewer.swiftpm/        ← Swift Playgrounds で開く App Project
     DisplayMode.swift          表示モード
     HTTP.swift                 URLSession の薄いラッパー
 Package.swift                ← Core を macOS / Linux でテストするためのマニフェスト
-Tests/GitHubViewerCoreTests/ Core のテスト
+Tests/GitHubViewerCoreTests/ Core のテスト (102 件)
 Examples/                    動作確認用のサンプル
+  c/                         C のサンプル 30 本 + GCC で作った期待出力
+docs/MiniC.md                内蔵 C コンパイラの説明
 ```
 
 `Core` は Foundation だけに依存しているので、Mac や Linux でテストできます。
 
 ```bash
-swift test    # 38 tests
+swift test    # 102 tests
 ```
+
+テストには **GCC との差分テスト**が含まれます。`Examples/c/` の 30 本を内蔵コンパイラで実行し、
+同じソースを `gcc -std=c99` でコンパイル・実行した出力と 1 バイトも違わないことを確認しています。
 
 ## 注意
 
 - 開いた HTML / JavaScript はアプリ内の WebView で **実行されます**。信頼できないコードを実行しないでください。
-- 端末内ランタイム (Pyodide など) は CDN (jsdelivr) から読み込むため、初回はダウンロードに時間がかかります (Ruby は約 16MB、Python は数十 MB)。
+- 内蔵 C コンパイラはネットワークを使いませんが、Pyodide などの WebView ランタイムは CDN (jsdelivr) から読み込むため、初回はダウンロードに時間がかかります (Ruby は約 16MB、Python は数十 MB)。
+- 内蔵 C コンパイラが対応していない機能 (`goto`、関数ポインタ、構造体を返す関数など) は [docs/MiniC.md](docs/MiniC.md) にまとめてあります。
 - ブランチ名にスラッシュを含む URL (`blob/feature/foo/index.html` など) は、先頭の 1 要素をブランチ名として扱います。
 - 1MB を超えるファイルは API が中身を返さないため、`raw.githubusercontent.com` から取得し直します。

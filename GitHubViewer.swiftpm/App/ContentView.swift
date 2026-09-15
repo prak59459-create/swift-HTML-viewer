@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
     @State private var showsSettings = false
     @State private var showsOutput = true
+    @State private var showsDisassembly = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -16,6 +17,9 @@ struct ContentView: View {
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showsSettings) {
             SettingsView(model: model)
+        }
+        .sheet(isPresented: $showsDisassembly) {
+            DisassemblyView(text: model.disassembly)
         }
     }
 
@@ -174,6 +178,15 @@ struct ContentView: View {
                     Label("出力", systemImage: "terminal")
                 }
                 .toggleStyle(.button)
+
+                if case .builtin = model.executionPlan {
+                    Button {
+                        model.showDisassembly()
+                        showsDisassembly = !model.disassembly.isEmpty
+                    } label: {
+                        Label("逆アセンブル", systemImage: "list.number")
+                    }
+                }
 
                 if let url = model.githubPageURL {
                     Link(destination: url) {
@@ -368,6 +381,32 @@ struct OutputPane: View {
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(color)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+
+/// 内蔵コンパイラが吐いたバイトコードを見るための画面。
+struct DisassemblyView: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView([.horizontal, .vertical]) {
+                Text(text.isEmpty ? "まだコンパイルしていません。" : text)
+                    .font(.system(.caption2, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle("バイトコード")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { dismiss() }
+                }
+            }
         }
     }
 }

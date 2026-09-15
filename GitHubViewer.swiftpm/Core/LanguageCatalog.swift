@@ -22,6 +22,17 @@ public enum LocalEngine: String, Equatable, CaseIterable {
     }
 }
 
+/// アプリに内蔵しているコンパイラ。端末内で完結し、ネットワークも使わない。
+public enum BuiltinCompiler: String, Equatable {
+    case miniC
+
+    public var displayName: String {
+        switch self {
+        case .miniC: return "内蔵 C コンパイラ (端末内)"
+        }
+    }
+}
+
 /// サーバー実行の指定。サービスごとに言語名が違うので両方持つ。
 public struct RemoteSpec: Equatable {
     /// Piston 側の言語名。
@@ -43,27 +54,33 @@ public struct ProgrammingLanguage: Equatable, Identifiable {
     public var id: String
     public var name: String
     public var fileExtensions: [String]
-    /// 端末内で実行できる場合のエンジン。
+    /// アプリに内蔵しているコンパイラ (あればこれを最優先で使う)。
+    public var builtin: BuiltinCompiler?
+    /// WebView のランタイムで実行できる場合のエンジン。
     public var local: LocalEngine?
     /// サーバーでコンパイル・実行する場合の指定。
     public var remote: RemoteSpec?
 
     public init(id: String, name: String, fileExtensions: [String],
+                builtin: BuiltinCompiler? = nil,
                 local: LocalEngine? = nil, remote: RemoteSpec? = nil) {
         self.id = id
         self.name = name
         self.fileExtensions = fileExtensions
+        self.builtin = builtin
         self.local = local
         self.remote = remote
     }
 
-    public var isRunnable: Bool { local != nil || remote != nil }
+    public var isRunnable: Bool { builtin != nil || local != nil || remote != nil }
 }
 
 /// 実行方法の決定結果。
 public enum ExecutionPlan: Equatable {
     /// HTML / SVG をそのまま WebView で表示・実行する。
     case browser
+    /// アプリ内蔵のコンパイラでコンパイルして実行する。
+    case builtin(BuiltinCompiler, ProgrammingLanguage)
     /// 端末内のランタイムで実行する。
     case local(LocalEngine, ProgrammingLanguage)
     /// 実行サービスに送ってコンパイル・実行する。
@@ -75,6 +92,8 @@ public enum ExecutionPlan: Equatable {
         switch self {
         case .browser:
             return "WebView で実行"
+        case .builtin(let compiler, _):
+            return compiler.displayName
         case .local(let engine, _):
             return engine.displayName
         case .remote(_, let language):
@@ -115,7 +134,8 @@ public enum LanguageCatalog {
                                                fileName: "main.sql")),
 
         // --- コンパイラ / ランタイムが要るのでサーバー実行 ---
-        ProgrammingLanguage(id: "c", name: "C", fileExtensions: ["c"],
+        ProgrammingLanguage(id: "c", name: "C", fileExtensions: ["c", "h"],
+                            builtin: .miniC,
                             remote: RemoteSpec(pistonLanguage: "c", wandboxLanguage: "C", fileName: "main.c")),
         ProgrammingLanguage(id: "cpp", name: "C++", fileExtensions: ["cpp", "cc", "cxx", "hpp"],
                             remote: RemoteSpec(pistonLanguage: "c++", wandboxLanguage: "C++", fileName: "main.cpp")),
@@ -204,6 +224,9 @@ public enum LanguageCatalog {
     public static func plan(for language: ProgrammingLanguage,
                             allowsRemoteExecution: Bool,
                             prefersLocal: Bool = true) -> ExecutionPlan {
+        if prefersLocal, let compiler = language.builtin {
+            return .builtin(compiler, language)
+        }
         if prefersLocal, let engine = language.local {
             return .local(engine, language)
         }
@@ -215,6 +238,9 @@ public enum LanguageCatalog {
         }
         if let engine = language.local {
             return .local(engine, language)
+        }
+        if let compiler = language.builtin {
+            return .builtin(compiler, language)
         }
         return .unavailable(reason: "\(language.name) は実行できません")
     }

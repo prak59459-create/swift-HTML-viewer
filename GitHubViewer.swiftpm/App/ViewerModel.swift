@@ -35,6 +35,8 @@ final class ViewerModel: ObservableObject {
 
     // 実行
     @Published private(set) var isRunning = false
+    /// 内蔵コンパイラの逆アセンブル結果。
+    @Published private(set) var disassembly: String = ""
     @Published private(set) var executionOutput: ExecutionOutput?
     /// 実行結果 (サンドボックスページ) を表示中かどうか。
     @Published private(set) var isShowingRunResult = false
@@ -133,6 +135,7 @@ final class ViewerModel: ObservableObject {
         errorMessage = nil
         consoleLines.removeAll()
         executionOutput = nil
+        disassembly = ""
         isShowingRunResult = false
         languageOverrideID = nil
         statusText = "読み込み中…"
@@ -204,6 +207,29 @@ final class ViewerModel: ObservableObject {
         executionOutput = nil
 
         switch executionPlan {
+        case .builtin(let compiler, let language):
+            switch compiler {
+            case .miniC:
+                statusText = "\(language.name) を内蔵コンパイラでコンパイル中…"
+                let execution = MiniC.execute(source: source, input: stdin, includeDisassembly: true)
+                disassembly = execution.disassembly
+                executionOutput = ExecutionOutput(
+                    languageVersion: "内蔵 C コンパイラ",
+                    compileOutput: execution.diagnosticsText,
+                    stdout: execution.output,
+                    stderr: execution.runtimeError ?? "",
+                    exitCode: Int(execution.exitCode))
+                if !execution.compiled {
+                    statusText = "コンパイルエラー: \(execution.errorCount) 件"
+                } else if let runtimeError = execution.runtimeError {
+                    statusText = "実行時エラー: \(runtimeError)"
+                } else {
+                    statusText = "実行完了 (終了コード \(execution.exitCode)"
+                        + ", \(execution.executedSteps) 命令"
+                        + (execution.warningCount > 0 ? ", 警告 \(execution.warningCount) 件" : "") + ")"
+                }
+            }
+
         case .browser:
             if mode == .auto || mode == .web {
                 renderedHTML = HTMLDocumentBuilder.executable(html: source, title: file.name)
@@ -254,6 +280,19 @@ final class ViewerModel: ObservableObject {
     func clearLog() {
         consoleLines.removeAll()
         executionOutput = nil
+    }
+
+    /// 内蔵コンパイラの逆アセンブルだけを作る。
+    func showDisassembly() {
+        guard case .builtin = executionPlan else { return }
+        let execution = MiniC.execute(source: source, input: stdin, includeDisassembly: true)
+        disassembly = execution.disassembly
+        if !execution.compiled {
+            errorMessage = "コンパイルできないので逆アセンブルできません。"
+            executionOutput = ExecutionOutput(languageVersion: "内蔵 C コンパイラ",
+                                              compileOutput: execution.diagnosticsText,
+                                              stdout: "", stderr: "", exitCode: 1)
+        }
     }
 
     var githubPageURL: URL? { file?.htmlURL }
