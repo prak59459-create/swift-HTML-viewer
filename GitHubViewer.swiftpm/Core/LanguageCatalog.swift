@@ -26,11 +26,13 @@ public enum LocalEngine: String, Equatable, CaseIterable {
 public enum BuiltinCompiler: String, Equatable {
     case miniC
     case miniPHP
+    case miniSwift
 
     public var displayName: String {
         switch self {
         case .miniC: return "内蔵 C コンパイラ (端末内)"
         case .miniPHP: return "内蔵 PHP インタプリタ (端末内)"
+        case .miniSwift: return "内蔵 Swift インタプリタ (端末内)"
         }
     }
 }
@@ -144,6 +146,7 @@ public enum LanguageCatalog {
         ProgrammingLanguage(id: "objectivec", name: "Objective-C", fileExtensions: ["m"],
                             remote: RemoteSpec(pistonLanguage: "objective-c", wandboxLanguage: nil, fileName: "main.m")),
         ProgrammingLanguage(id: "swift", name: "Swift", fileExtensions: ["swift"],
+                            builtin: .miniSwift,
                             remote: RemoteSpec(pistonLanguage: "swift", wandboxLanguage: "Swift", fileName: "main.swift")),
         ProgrammingLanguage(id: "java", name: "Java", fileExtensions: ["java"],
                             remote: RemoteSpec(pistonLanguage: "java", wandboxLanguage: "Java", fileName: "Main.java")),

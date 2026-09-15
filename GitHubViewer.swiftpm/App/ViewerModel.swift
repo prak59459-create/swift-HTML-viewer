@@ -209,6 +209,24 @@ final class ViewerModel: ObservableObject {
         switch executionPlan {
         case .builtin(let compiler, let language):
             switch compiler {
+            case .miniSwift:
+                statusText = "\(language.name) を内蔵インタプリタで実行中…"
+                let execution = MiniSwift.execute(source: source, input: stdin)
+                disassembly = ""
+                executionOutput = ExecutionOutput(
+                    languageVersion: "内蔵 Swift インタプリタ",
+                    compileOutput: execution.diagnosticsText,
+                    stdout: execution.output,
+                    stderr: execution.runtimeError ?? "",
+                    exitCode: execution.runtimeError == nil ? 0 : 1)
+                if !execution.parsed {
+                    statusText = "構文エラー: \(execution.errorCount) 件"
+                } else if let runtimeError = execution.runtimeError {
+                    statusText = runtimeError
+                } else {
+                    statusText = "実行完了"
+                }
+
             case .miniPHP:
                 statusText = "\(language.name) を内蔵インタプリタで実行中…"
                 let execution = MiniPHP.execute(source: source, input: stdin)

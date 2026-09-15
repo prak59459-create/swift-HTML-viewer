@@ -2,10 +2,14 @@
 
 GitHub のリンクを貼り付けると、その中身を **HTML として実行** したり、**C や Python のプログラムとして実行** したり、Markdown・ソース・画像として表示できる iPadOS / iOS アプリです。
 
-**C コンパイラと PHP インタプリタは自作のものをアプリに内蔵しています。** サーバーにも外部サービスにも頼らず、iPad の中だけで動きます。
+**C コンパイラ・PHP インタプリタ・Swift インタプリタは、すべて自作のものをアプリに内蔵しています。**
+サーバーにも外部サービスにも頼らず、iPad の中だけで動きます。
 
 - C: 字句解析 → 構文解析 → 型検査 → バイトコード生成 → 仮想マシン → [docs/MiniC.md](docs/MiniC.md)
 - PHP: 字句解析 → 構文解析 → AST インタプリタ → [docs/MiniPHP.md](docs/MiniPHP.md)
+- Swift: 字句解析 → 構文解析 → AST インタプリタ → [docs/MiniSwift.md](docs/MiniSwift.md)
+
+いずれも本物の処理系 (gcc / php / swiftc) と出力を突き合わせて検証しています。
 
 **iPad の Swift Playgrounds でそのまま開いて実行できる App Project (`.swiftpm`)** として作ってあります。Mac や Xcode は必要ありません。
 
@@ -37,6 +41,7 @@ https://github.com/prak59459-create/swift-html-viewer/tree/main/Examples
 | `Examples/demo.c` | **内蔵 C コンパイラ** (端末内、設定不要) |
 | `Examples/c/*.c` | 内蔵 C コンパイラ (GCC と出力を突き合わせた 40 本) |
 | `Examples/php/*.php` | 内蔵 PHP インタプリタ (PHP 8.4 と出力を突き合わせた 16 本) |
+| `Examples/swift/*.swift` | 内蔵 Swift インタプリタ (swiftc 6.0.3 と出力を突き合わせた 14 本) |
 
 ## できること
 
@@ -71,6 +76,7 @@ iPadOS ではネイティブのコンパイラを同梱できない (実行時�
 | --- | --- |
 | C | 自作のコンパイラ + バイトコード仮想マシン ([docs/MiniC.md](docs/MiniC.md)) |
 | PHP | 自作のインタプリタ ([docs/MiniPHP.md](docs/MiniPHP.md)) |
+| Swift | 自作のインタプリタ ([docs/MiniSwift.md](docs/MiniSwift.md)) |
 
 **C** は C99 の実用的な部分をほぼ網羅しています (構造体・共用体・ポインタ・多次元配列・関数ポインタ・
 `goto`・可変長引数・`static` ローカル・構造体の値返し・`malloc`・`printf`・`qsort` など)。
@@ -79,6 +85,9 @@ iPadOS ではネイティブのコンパイラを同梱できない (実行時�
 **PHP** は変数・配列 (順序つき連想配列)・関数・クロージャ・クラスと継承・`foreach`・文字列の変数展開・
 インライン HTML (`<?php ... ?>` と `<?= ?>`) に対応し、標準関数を 150 以上用意しています。
 HTML を出力する PHP は、その結果をそのままページとして表示します。
+
+**Swift** は `let`/`var`・構造体 (値型)・クラス (参照型)・列挙型・オプショナル・`guard let`・
+`switch`・クロージャ (参照キャプチャ)・高階関数・`inout`・タプルなどに対応しています。
 
 どちらもコンパイル・構文エラーは行と桁つきで、実行時エラー (NULL 参照、0 除算、無限ループ、深すぎる再帰) も
 安全に止めて報告します。
@@ -98,7 +107,7 @@ WebView に WebAssembly / JavaScript 実装のランタイムを読み込んで�
 
 ### 3. 実行サービスでコンパイル・実行 — 設定で許可したときだけ
 
-C++ / Objective-C / Swift / Java / Kotlin / C# / Go / Rust / Perl / Shell / Haskell / Scala / Dart / Elixir / Erlang / Nim / Zig / Pascal / D / R / Julia / OCaml / Crystal / Groovy / Lisp (C もここから選べます)
+C++ / Objective-C / Java / Kotlin / C# / Go / Rust / Perl / Shell / Haskell / Scala / Dart / Elixir / Erlang / Nim / Zig / Pascal / D / R / Julia / OCaml / Crystal / Groovy / Lisp (C もここから選べます)
 
 - 既定は **Wandbox** (`https://wandbox.org/api`) で、登録不要で使えます。
 - **Piston** も選べます。公開インスタンス (`emkc.org`) は 2026 年 2 月からホワイトリスト制なので、[自分で立てた Piston](https://github.com/engineer-man/piston) の URL を設定で指定してください。
@@ -123,6 +132,15 @@ GitHubViewer.swiftpm/        ← Swift Playgrounds で開く App Project
     ViewerModel.swift          状態管理
     WebView.swift              WKWebView ラッパー (console ブリッジ付き)
   Core/                      ロジック (UI 非依存)
+    MiniSwift/                 自作の Swift インタプリタ
+      SwiftLexer.swift           字句解析 (文字列補間も)
+      SwiftParser.swift          構文解析
+      SwiftAST.swift             構文木
+      SwiftValue.swift           値と表示 (Swift と同じ print の書式)
+      SwiftOperations.swift      演算子
+      SwiftInterpreter.swift     実行 (スコープ・型・クロージャ)
+      SwiftBuiltins.swift        標準ライブラリ
+      MiniSwift.swift            窓口
     MiniPHP/                   自作の PHP インタプリタ
       PHPLexer.swift             字句解析 (インライン HTML も)
       PHPParser.swift            構文解析
@@ -155,23 +173,25 @@ GitHubViewer.swiftpm/        ← Swift Playgrounds で開く App Project
     DisplayMode.swift          表示モード
     HTTP.swift                 URLSession の薄いラッパー
 Package.swift                ← Core を macOS / Linux でテストするためのマニフェスト
-Tests/GitHubViewerCoreTests/ Core のテスト (129 件)
+Tests/GitHubViewerCoreTests/ Core のテスト (147 件)
 Examples/                    動作確認用のサンプル
   c/                         C のサンプル 40 本 + GCC で作った期待出力
   php/                       PHP のサンプル 16 本 + PHP 8.4 で作った期待出力
+  swift/                     Swift のサンプル 14 本 + swiftc で作った期待出力
 docs/MiniC.md                内蔵 C コンパイラの説明
 docs/MiniPHP.md              内蔵 PHP インタプリタの説明
+docs/MiniSwift.md            内蔵 Swift インタプリタの説明
 ```
 
 `Core` は Foundation だけに依存しているので、Mac や Linux でテストできます。
 
 ```bash
-swift test    # 129 tests
+swift test    # 147 tests
 ```
 
-テストには **本物の処理系との差分テスト**が含まれます。`Examples/c/` の 40 本を内蔵コンパイラで、
-`Examples/php/` の 16 本を内蔵インタプリタで実行し、同じソースを `gcc -std=c99` および `php` (8.4) で
-実行した出力と 1 バイトも違わないことを確認しています。
+テストには **本物の処理系との差分テスト**が含まれます。`Examples/c/` の 40 本、`Examples/php/` の 16 本、
+`Examples/swift/` の 14 本を内蔵の処理系で実行し、同じソースを `gcc -std=c99` / `php` 8.4 /
+`swiftc` 6.0.3 で実行した出力と 1 バイトも違わないことを確認しています。
 
 ## 注意
 
