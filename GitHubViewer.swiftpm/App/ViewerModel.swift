@@ -209,6 +209,30 @@ final class ViewerModel: ObservableObject {
         switch executionPlan {
         case .builtin(let compiler, let language):
             switch compiler {
+            case .miniPHP:
+                statusText = "\(language.name) を内蔵インタプリタで実行中…"
+                let execution = MiniPHP.execute(source: source, input: stdin)
+                disassembly = ""
+                executionOutput = ExecutionOutput(
+                    languageVersion: "内蔵 PHP インタプリタ",
+                    compileOutput: execution.diagnosticsText,
+                    stdout: execution.output,
+                    stderr: execution.runtimeError ?? "",
+                    exitCode: Int(execution.exitCode))
+                if !execution.parsed {
+                    statusText = "構文エラー: \(execution.errorCount) 件"
+                } else if let runtimeError = execution.runtimeError {
+                    statusText = runtimeError
+                } else {
+                    statusText = "実行完了 (終了コード \(execution.exitCode))"
+                    // HTML を出力する PHP は、そのままページとして表示する
+                    if execution.output.range(of: "<[a-zA-Z!/]", options: .regularExpression) != nil {
+                        renderedHTML = HTMLDocumentBuilder.executable(html: execution.output, title: file.name)
+                        isShowingRunResult = true
+                        reloadToken += 1
+                    }
+                }
+
             case .miniC:
                 statusText = "\(language.name) を内蔵コンパイラでコンパイル中…"
                 let execution = MiniC.execute(source: source, input: stdin, includeDisassembly: true)

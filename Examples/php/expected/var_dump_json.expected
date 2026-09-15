@@ -1,0 +1,40 @@
+float(9.99)
+int(5)
+bool(true)
+array(2) {
+  [0]=>
+  string(1) "a"
+  [1]=>
+  string(1) "b"
+}
+NULL
+float(1)
+float(0.30000000000000004)
+string(10) "multi
+line"
+{"name":"widget","price":9.99,"tags":["a","b"],"stock":5,"ok":true}
+[1,2,3]
+{"nested":{"x":1}}
+Array
+(
+    [name] => widget
+    [price] => 9.99
+    [tags] => Array
+        (
+            [0] => a
+            [1] => b
+        )
+
+    [stock] => 5
+    [ok] => 1
+)
+Array
+(
+    [0] => 1
+    [1] => Array
+        (
+            [0] => 2
+            [1] => 3
+        )
+
+)

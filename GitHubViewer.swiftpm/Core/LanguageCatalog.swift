@@ -25,10 +25,12 @@ public enum LocalEngine: String, Equatable, CaseIterable {
 /// アプリに内蔵しているコンパイラ。端末内で完結し、ネットワークも使わない。
 public enum BuiltinCompiler: String, Equatable {
     case miniC
+    case miniPHP
 
     public var displayName: String {
         switch self {
         case .miniC: return "内蔵 C コンパイラ (端末内)"
+        case .miniPHP: return "内蔵 PHP インタプリタ (端末内)"
         }
     }
 }
@@ -154,6 +156,7 @@ public enum LanguageCatalog {
         ProgrammingLanguage(id: "rust", name: "Rust", fileExtensions: ["rs"],
                             remote: RemoteSpec(pistonLanguage: "rust", wandboxLanguage: "Rust", fileName: "main.rs")),
         ProgrammingLanguage(id: "php", name: "PHP", fileExtensions: ["php"],
+                            builtin: .miniPHP,
                             remote: RemoteSpec(pistonLanguage: "php", wandboxLanguage: "PHP", fileName: "main.php")),
         ProgrammingLanguage(id: "perl", name: "Perl", fileExtensions: ["pl"],
                             remote: RemoteSpec(pistonLanguage: "perl", wandboxLanguage: "Perl", fileName: "main.pl")),
