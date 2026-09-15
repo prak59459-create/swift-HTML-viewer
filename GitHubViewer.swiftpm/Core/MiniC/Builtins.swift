@@ -10,6 +10,11 @@ public enum Builtin: Int, CaseIterable {
     case rand, srand, time
     case sqrt, pow, fabs, floor, ceil, round, fmod
     case sin, cos, tan, atan, atan2, log, log10, exp
+    // 追加分
+    case sprintf, snprintf, fprintf, fputs, fputc, fflush
+    case strstr, strrchr, strdup, strncat, memcmp, strtol, strtod, atol
+    case isalpha, isdigit, isalnum, isspace, isupper, islower, ispunct, toupper, tolower
+    case qsort, bsearch, assertFailed
 
     public var name: String {
         switch self {
@@ -55,6 +60,32 @@ public enum Builtin: Int, CaseIterable {
         case .log: return "log"
         case .log10: return "log10"
         case .exp: return "exp"
+        case .sprintf: return "sprintf"
+        case .snprintf: return "snprintf"
+        case .fprintf: return "fprintf"
+        case .fputs: return "fputs"
+        case .fputc: return "fputc"
+        case .fflush: return "fflush"
+        case .strstr: return "strstr"
+        case .strrchr: return "strrchr"
+        case .strdup: return "strdup"
+        case .strncat: return "strncat"
+        case .memcmp: return "memcmp"
+        case .strtol: return "strtol"
+        case .strtod: return "strtod"
+        case .atol: return "atol"
+        case .isalpha: return "isalpha"
+        case .isdigit: return "isdigit"
+        case .isalnum: return "isalnum"
+        case .isspace: return "isspace"
+        case .isupper: return "isupper"
+        case .islower: return "islower"
+        case .ispunct: return "ispunct"
+        case .toupper: return "toupper"
+        case .tolower: return "tolower"
+        case .qsort: return "qsort"
+        case .bsearch: return "bsearch"
+        case .assertFailed: return "__assert_failed"
         }
     }
 
@@ -93,6 +124,27 @@ public enum Builtin: Int, CaseIterable {
             return ([.double], .double, false)
         case .pow, .fmod, .atan2:
             return ([.double, .double], .double, false)
+
+        case .sprintf: return ([charPointer, charPointer], .int, true)
+        case .snprintf: return ([charPointer, .long, charPointer], .int, true)
+        case .fprintf: return ([voidPointer, charPointer], .int, true)
+        case .fputs: return ([charPointer, voidPointer], .int, false)
+        case .fputc: return ([.int, voidPointer], .int, false)
+        case .fflush: return ([voidPointer], .int, false)
+        case .strstr, .strrchr: return self == .strstr ? ([charPointer, charPointer], charPointer, false)
+                                                       : ([charPointer, .int], charPointer, false)
+        case .strdup: return ([charPointer], charPointer, false)
+        case .strncat: return ([charPointer, charPointer, .long], charPointer, false)
+        case .memcmp: return ([voidPointer, voidPointer, .long], .int, false)
+        case .strtol: return ([charPointer, .pointer(charPointer), .int], .long, false)
+        case .strtod: return ([charPointer, .pointer(charPointer)], .double, false)
+        case .atol: return ([charPointer], .long, false)
+        case .isalpha, .isdigit, .isalnum, .isspace, .isupper, .islower, .ispunct,
+             .toupper, .tolower:
+            return ([.int], .int, false)
+        case .qsort: return ([voidPointer, .long, .long, voidPointer], .void, false)
+        case .bsearch: return ([voidPointer, voidPointer, .long, .long, voidPointer], voidPointer, false)
+        case .assertFailed: return ([charPointer, .int], .void, false)
         }
     }
 

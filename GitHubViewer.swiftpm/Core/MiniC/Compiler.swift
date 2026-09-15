@@ -48,6 +48,9 @@ final class MiniCCompiler {
         var continuePatches: [Int] = []
     }
     private var loopContexts: [JumpContext] = []
+    /// goto のラベル位置と、まだ飛び先が決まっていない goto。
+    private var labelPositions: [String: Int] = [:]
+    private var pendingGotos: [(label: String, patchIndex: Int, location: SourceLocation)] = []
     /// switch は break だけを受け持つ。
     private var switchContexts: [JumpContext] = []
 
@@ -58,6 +61,7 @@ final class MiniCCompiler {
     // MARK: - 入口
 
     func compile(unit: TranslationUnit, structs: [StructDefinition], enums: [EnumDefinition]) throws -> MiniCProgram {
+        defineStandardNames()
         registerTypes(unit: unit, structs: structs, enums: enums)
         registerFunctionSignatures(unit)
         allocateGlobals(unit)
@@ -81,12 +85,35 @@ final class MiniCCompiler {
                             staticImage: staticData)
     }
 
+    /// 標準ヘッダにある名前のうち、コンパイラ側で用意しておくもの。
+    private func defineStandardNames() {
+        types.defineTypedef("va_list", type: .long)
+        types.defineTypedef("size_t", type: .ulong)
+        types.defineTypedef("ssize_t", type: .long)
+        types.defineTypedef("FILE", type: .void)
+        types.defineTypedef("uint8_t", type: .uchar)
+        types.defineTypedef("int8_t", type: .char)
+        types.defineTypedef("uint32_t", type: .uint)
+        types.defineTypedef("int32_t", type: .int)
+        types.defineTypedef("uint64_t", type: .ulong)
+        types.defineTypedef("int64_t", type: .long)
+        types.defineEnumConstant("NULL", value: 0)
+        types.defineEnumConstant("EOF", value: -1)
+        types.defineEnumConstant("stdout", value: 1)
+        types.defineEnumConstant("stderr", value: 2)
+        types.defineEnumConstant("stdin", value: 0)
+        types.defineEnumConstant("true", value: 1)
+        types.defineEnumConstant("false", value: 0)
+        types.defineEnumConstant("RAND_MAX", value: 2_147_483_647)
+    }
+
     // MARK: - 型の登録
 
     private func registerTypes(unit: TranslationUnit, structs: [StructDefinition], enums: [EnumDefinition]) {
         // 1. 名前だけ先に登録して、相互参照 (struct Node { struct Node *next; }) を許す
         for definition in structs {
-            types.defineStruct(StructLayout(name: definition.name, members: [], size: 1, alignment: 1))
+            types.defineStruct(StructLayout(name: definition.name, members: [], size: 1, alignment: 1,
+                                            isUnion: definition.isUnion))
         }
         for definition in enums {
             for constant in definition.constants {
@@ -110,7 +137,8 @@ final class MiniCCompiler {
                 }
                 members.append((name: member.name, type: type))
             }
-            types.defineStruct(types.layout(name: definition.name, members: members))
+            types.defineStruct(types.layout(name: definition.name, members: members,
+                                            isUnion: definition.isUnion))
         }
         // typedef が構造体を指している場合、サイズが確定した後にもう一度解決する
         for declaration in unit.declarations {
@@ -121,35 +149,37 @@ final class MiniCCompiler {
     }
 
     private func resolveType(_ typeName: TypeName) -> CType {
-        var type: CType
-        switch typeName.specifier {
-        case .void: type = .void
-        case .char: type = .char
-        case .uchar: type = .uchar
-        case .int: type = .int
-        case .uint: type = .uint
-        case .long: type = .long
-        case .ulong: type = .ulong
-        case .double: type = .double
-        case .structure(let name):
-            type = .structure(name)
-        case .enumeration:
-            type = .int
-        case .typedefName(let name):
-            if let resolved = types.typedef(named: name) {
-                type = resolved
-            } else {
-                diagnostics.error("知らない型名です: \(name)", at: typeName.location)
-                type = .int
+        resolve(typeName.type, at: typeName.location)
+    }
+
+    private func resolve(_ reference: TypeRef, at location: SourceLocation) -> CType {
+        switch reference {
+        case .base(let specifier):
+            switch specifier {
+            case .void: return .void
+            case .char: return .char
+            case .uchar: return .uchar
+            case .int: return .int
+            case .uint: return .uint
+            case .long: return .long
+            case .ulong: return .ulong
+            case .double: return .double
+            case .structure(let name): return .structure(name)
+            case .enumeration: return .int
+            case .typedefName(let name):
+                if let resolved = types.typedef(named: name) { return resolved }
+                diagnostics.error("知らない型名です: \(name)", at: location)
+                return .int
             }
+        case .pointer(let inner):
+            return .pointer(resolve(inner, at: location))
+        case .array(let inner, let count):
+            return .array(resolve(inner, at: location), count: count ?? 0)
+        case .function(let returns, let parameters, let isVariadic):
+            return .function(returns: resolve(returns, at: location),
+                             parameters: parameters.map { resolve($0.type.type, at: location).decayed },
+                             isVariadic: isVariadic)
         }
-        for _ in 0..<typeName.pointerDepth {
-            type = .pointer(type)
-        }
-        for count in typeName.arrayCounts.reversed() {
-            type = .array(type, count: count ?? 0)
-        }
-        return type
     }
 
     // MARK: - 関数シグネチャ
@@ -159,11 +189,6 @@ final class MiniCCompiler {
             guard case .function(let function) = declaration else { continue }
             let returnType = resolveType(function.returnType)
             let parameterTypes = function.parameters.map { resolveType($0.type).decayed }
-
-            if returnType.isStructure {
-                diagnostics.error("構造体を戻り値にする関数にはまだ対応していません "
-                                  + "(引数として渡すことはできます)。", at: function.location)
-            }
 
             if Builtin.lookup[function.name] != nil {
                 diagnostics.warning("\(function.name) は組み込み関数です。ここでの宣言は無視されます。",
@@ -189,7 +214,10 @@ final class MiniCCompiler {
 
             let index = functions.count
             functions.append(FunctionInfo(name: function.name, entry: -1, frameSize: 0,
-                                          parameters: [], returnsVoid: returnType == .void))
+                                          parameters: [], returnsVoid: returnType == .void,
+                                          returnsAggregate: returnType.isStructure,
+                                          returnSize: types.size(of: returnType),
+                                          isVariadic: function.isVariadic))
             signatures[function.name] = FunctionSignature(index: index,
                                                           returnType: returnType,
                                                           parameterTypes: parameterTypes,
@@ -437,6 +465,8 @@ final class MiniCCompiler {
         maximumFrameSize = 0
         currentReturnType = signature.returnType
         currentFunctionName = function.name
+        labelPositions.removeAll()
+        pendingGotos.removeAll()
 
         var parameterInfos: [ParameterInfo] = []
         for (position, parameter) in function.parameters.enumerated() {
@@ -458,6 +488,16 @@ final class MiniCCompiler {
         for statement in function.body ?? [] {
             emitStatement(statement)
         }
+
+        // goto の飛び先を解決する
+        for pending in pendingGotos {
+            guard let target = labelPositions[pending.label] else {
+                diagnostics.error("ラベル \(pending.label) が見つかりません。", at: pending.location)
+                continue
+            }
+            patch(pending.patchIndex, to: target)
+        }
+        pendingGotos.removeAll()
 
         // 最後まで来たときの戻り。
         // 本体が return で終わっていて、関数の末尾に飛んでくるジャンプもなければ省く。
@@ -483,7 +523,10 @@ final class MiniCCompiler {
                                         entry: entry,
                                         frameSize: maximumFrameSize,
                                         parameters: parameterInfos,
-                                        returnsVoid: currentReturnType == .void)
+                                        returnsVoid: currentReturnType == .void,
+                                        returnsAggregate: currentReturnType.isStructure,
+                                        returnSize: types.size(of: currentReturnType),
+                                        isVariadic: signature.isVariadic)
         scopes = []
     }
 
@@ -512,6 +555,17 @@ final class MiniCCompiler {
             if type != .void {
                 emit(.pop, at: location)
             }
+
+        case .labeled(let label, let inner, let location):
+            if labelPositions[label] != nil {
+                diagnostics.error("ラベル \(label) が二重に定義されています。", at: location)
+            }
+            labelPositions[label] = instructions.count
+            emitStatement(inner)
+
+        case .gotoStmt(let label, let location):
+            let index = emit(.jump(-1), at: location)
+            pendingGotos.append((label: label, patchIndex: index, location: location))
 
         case .declaration(let variables, _):
             for variable in variables {
@@ -622,7 +676,15 @@ final class MiniCCompiler {
                     return
                 }
                 let type = emitExpression(value)
-                convert(from: type, to: currentReturnType, at: location, context: "return")
+                if currentReturnType.isStructure {
+                    if type != currentReturnType {
+                        diagnostics.error("return の型が違います "
+                                          + "(\(currentReturnType.description) ← \(type.description))。",
+                                          at: location)
+                    }
+                } else {
+                    convert(from: type, to: currentReturnType, at: location, context: "return")
+                }
                 emit(.returnValue, at: location)
             } else {
                 if currentReturnType != .void {
@@ -725,7 +787,16 @@ final class MiniCCompiler {
         }
 
         if variable.isStatic {
-            diagnostics.warning("関数の中の static は、ふつうのローカル変数として扱われます。", at: variable.location)
+            // 静的領域に置いて、関数を抜けても値が残るようにする
+            let size = types.size(of: type)
+            let alignment = types.alignment(of: type)
+            let address = TypeContext.align(staticData.count, to: alignment)
+            staticData.append(contentsOf: Array(repeating: 0, count: address - staticData.count + size))
+            if let initializer = variable.initializer {
+                writeStaticInitializer(initializer, type: type, address: address, location: variable.location)
+            }
+            scopes[scopes.count - 1][variable.name] = Symbol(type: type, storage: .global(address))
+            return
         }
         let size = types.size(of: type)
         let offset = allocateLocal(size: size, alignment: types.alignment(of: type))
@@ -857,17 +928,24 @@ final class MiniCCompiler {
                 emit(.pushInt(value), at: location)
                 return .int
             }
-            guard let symbol = lookup(name) else {
-                diagnostics.error("知らない名前です: \(name)", at: location)
-                emit(.pushInt(0), at: location)
-                return .int
+            if let symbol = lookup(name) {
+                emitAddressOf(symbol, at: location)
+                if symbol.type.isArray || symbol.type.isStructure {
+                    return symbol.type // 配列と構造体はアドレスをそのまま値として扱う
+                }
+                emitLoad(type: symbol.type, at: location)
+                return symbol.type
             }
-            emitAddressOf(symbol, at: location)
-            if symbol.type.isArray || symbol.type.isStructure {
-                return symbol.type // 配列と構造体はアドレスをそのまま値として扱う
+            // 関数名は関数ポインタとして扱える
+            if let signature = signatures[name] {
+                emit(.pushFunction(signature.index), at: location)
+                return .pointer(.function(returns: signature.returnType,
+                                          parameters: signature.parameterTypes,
+                                          isVariadic: signature.isVariadic))
             }
-            emitLoad(type: symbol.type, at: location)
-            return symbol.type
+            diagnostics.error("知らない名前です: \(name)", at: location)
+            emit(.pushInt(0), at: location)
+            return .int
 
         case .unary(let op, let operand, let location):
             return emitUnary(op, operand, location)
@@ -902,6 +980,15 @@ final class MiniCCompiler {
         case .sizeofType(let typeName, let location):
             emit(.pushInt(Int64(types.size(of: resolveType(typeName)))), at: location)
             return .long
+
+        case .vaArg(let list, let typeName, let location):
+            let type = resolveType(typeName)
+            _ = emitAddressExpression(list)
+            emit(.vaArg(isDouble: type == .double), at: location)
+            if type.isInteger, types.size(of: type) < 8 {
+                emit(.truncate(size: types.size(of: type), signed: !type.isUnsigned), at: location)
+            }
+            return type
 
         case .sizeofExpr(let inner, let location):
             let type = inferType(inner)
@@ -975,7 +1062,13 @@ final class MiniCCompiler {
                 }
                 structureType = pointee
             } else {
-                structureType = emitAddressExpression(base)
+                switch base {
+                case .identifier, .subscriptExpr, .member, .unary(.dereference, _, _):
+                    structureType = emitAddressExpression(base)
+                default:
+                    // 関数の戻り値など、その場限りの構造体。値 (アドレス) をそのまま使う
+                    structureType = emitExpression(base)
+                }
             }
             guard case .structure(let structureName) = structureType,
                   let layout = types.structure(named: structureName) else {
@@ -1385,17 +1478,38 @@ final class MiniCCompiler {
     // MARK: - 関数呼び出し
 
     private func emitCall(_ callee: Expr, _ arguments: [Expr], _ location: SourceLocation) -> CType {
-        guard case .identifier(let name, _) = callee else {
-            diagnostics.error("関数ポインタの呼び出しには対応していません。", at: location)
-            return .int
+        if case .identifier(let name, _) = callee {
+            // va_start / va_end はその場で処理する
+            if name == "va_start" {
+                if let first = arguments.first {
+                    _ = emitAddressExpression(first)
+                    emit(.pushInt(0), at: location)
+                    emit(.storeDrop(size: 8), at: location)
+                } else {
+                    diagnostics.error("va_start には引数が必要です。", at: location)
+                }
+                return .void
+            }
+            if name == "va_end" {
+                return .void
+            }
+            if let builtin = Builtin.lookup[name], lookup(name) == nil {
+                return emitBuiltinCall(builtin, arguments, location)
+            }
+            if lookup(name) == nil, let signature = signatures[name] {
+                return emitDirectCall(name: name, signature: signature, arguments: arguments, location: location)
+            }
         }
 
-        if let builtin = Builtin.lookup[name] {
-            return emitBuiltinCall(builtin, arguments, location)
-        }
-
-        guard let signature = signatures[name] else {
-            diagnostics.error("知らない関数です: \(name)", at: location)
+        // 関数ポインタ経由の呼び出し
+        let calleeType = inferType(callee).decayed
+        guard case .pointer(let pointee) = calleeType,
+              case .function(let returns, let parameterTypes, let isVariadic) = pointee else {
+            if case .identifier(let name, _) = callee {
+                diagnostics.error("知らない関数です: \(name)", at: location)
+            } else {
+                diagnostics.error("関数ではないものを呼び出しています (\(calleeType.description))。", at: location)
+            }
             for argument in arguments {
                 let type = emitExpression(argument)
                 if type != .void { emit(.pop, at: location) }
@@ -1404,9 +1518,48 @@ final class MiniCCompiler {
             return .int
         }
 
+        if arguments.count != parameterTypes.count, !isVariadic {
+            diagnostics.error("この関数ポインタの引数は \(parameterTypes.count) 個ですが "
+                              + "\(arguments.count) 個渡されています。", at: location)
+        }
+        var hiddenCount = 0
+        var temporary = -1
+        if returns.isStructure {
+            temporary = allocateLocal(size: types.size(of: returns), alignment: types.alignment(of: returns))
+            emit(.pushLocal(temporary), at: location)
+            hiddenCount = 1
+        }
+        for (position, argument) in arguments.enumerated() {
+            let actual = emitExpression(argument)
+            if position < parameterTypes.count {
+                let expected = parameterTypes[position]
+                if !expected.isStructure {
+                    convert(from: actual, to: expected, at: location, context: "引数")
+                }
+            } else if actual == .char || actual == .uchar {
+                emit(.truncate(size: 4, signed: actual == .char), at: location)
+            }
+        }
+        _ = emitExpression(callee)
+        emit(.callIndirect(argumentCount: arguments.count + hiddenCount), at: location)
+        return returns
+    }
+
+    /// 名前の分かっている関数の呼び出し。
+    private func emitDirectCall(name: String, signature: FunctionSignature,
+                                arguments: [Expr], location: SourceLocation) -> CType {
         if arguments.count != signature.parameterTypes.count, !signature.isVariadic {
             diagnostics.error("\(name) の引数は \(signature.parameterTypes.count) 個ですが "
                               + "\(arguments.count) 個渡されています。", at: location)
+        }
+
+        // 構造体を返す関数は、置き場所のアドレスを最初に渡す
+        var hiddenCount = 0
+        if signature.returnType.isStructure {
+            let size = types.size(of: signature.returnType)
+            let temporary = allocateLocal(size: size, alignment: types.alignment(of: signature.returnType))
+            emit(.pushLocal(temporary), at: location)
+            hiddenCount = 1
         }
 
         for (position, argument) in arguments.enumerated() {
@@ -1421,10 +1574,12 @@ final class MiniCCompiler {
                 } else {
                     convert(from: actual, to: expected, at: location, context: "\(name) の引数")
                 }
+            } else if actual == .char || actual == .uchar {
+                emit(.truncate(size: 4, signed: actual == .char), at: location)
             }
         }
 
-        emit(.call(function: signature.index, argumentCount: arguments.count), at: location)
+        emit(.call(function: signature.index, argumentCount: arguments.count + hiddenCount), at: location)
         return signature.returnType
     }
 

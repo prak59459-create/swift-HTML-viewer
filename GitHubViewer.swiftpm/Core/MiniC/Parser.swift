@@ -7,7 +7,13 @@ struct Parser {
     private let diagnostics: DiagnosticBag
 
     /// typedef された名前 (型名として扱うために覚えておく)。
-    private var typedefNames: Set<String> = []
+    /// 標準ヘッダで定義されている名前は最初から入れておく。
+    private var typedefNames: Set<String> = [
+        "va_list", "size_t", "ssize_t", "FILE",
+        "int8_t", "uint8_t", "int16_t", "uint16_t",
+        "int32_t", "uint32_t", "int64_t", "uint64_t",
+        "ptrdiff_t", "intptr_t", "uintptr_t",
+    ]
     /// enum 定数 (定数式の評価に使う)。
     private var enumConstants: [String: Int64] = [:]
     /// 無名構造体に付ける名前の連番。
@@ -102,6 +108,8 @@ struct Parser {
                 if let declaration = try parseTopLevelDeclaration() {
                     declarations.append(declaration)
                 }
+                declarations.append(contentsOf: pendingTypedefs)
+                pendingTypedefs.removeAll()
             } catch {
                 synchronize()
             }
@@ -122,12 +130,21 @@ struct Parser {
         if current.isKeyword(.typedef) {
             advance()
             let (specifier, _) = try parseDeclarationSpecifiers()
-            let declarator = try parseDeclarator(context: "typedef")
-            let type = TypeName(specifier: specifier, pointerDepth: declarator.pointerDepth,
-                                arrayCounts: declarator.arrayCounts, location: startLocation)
+            var names: [(String, TypeRef, SourceLocation)] = []
+            repeat {
+                let declarator = try parseDeclarator(context: "typedef", base: specifier)
+                typedefNames.insert(declarator.name)
+                names.append((declarator.name, declarator.type, declarator.location))
+            } while match(.comma)
             try expect(.semicolon, "typedef の終わり")
-            typedefNames.insert(declarator.name)
-            return .typedefDefinition(name: declarator.name, type: type, startLocation)
+            // 複数書かれていても、最初のものを宣言として返す (残りも名前は登録済み)
+            for (name, type, location) in names.dropFirst() {
+                pendingTypedefs.append(.typedefDefinition(name: name,
+                                                          type: TypeName(type, location: location),
+                                                          location))
+            }
+            guard let first = names.first else { return nil }
+            return .typedefDefinition(name: first.0, type: TypeName(first.1, location: first.2), startLocation)
         }
 
         let (specifier, isStatic) = try parseDeclarationSpecifiers()
@@ -138,6 +155,7 @@ struct Parser {
             switch specifier {
             case .structure(let name):
                 return .structDefinition(pendingStructs[name] ?? StructDefinition(name: name, members: [],
+                                                                                  isUnion: false,
                                                                                   location: startLocation))
             case .enumeration(let name):
                 return .enumDefinition(pendingEnums[name] ?? EnumDefinition(name: name, constants: [],
@@ -149,72 +167,40 @@ struct Parser {
 
         var declarations: [VariableDeclaration] = []
         repeat {
-            let declarator = try parseDeclarator(context: "宣言")
-            let type = TypeName(specifier: specifier, pointerDepth: declarator.pointerDepth,
-                                arrayCounts: declarator.arrayCounts, location: declarator.location)
+            let declarator = try parseDeclarator(context: "宣言", base: specifier)
+            let typeName = TypeName(declarator.type, location: declarator.location)
 
-            // 関数
-            if current.isPunctuator(.leftParen) {
-                let function = try parseFunctionRest(name: declarator.name, returnType: type,
-                                                     location: declarator.location)
-                return .function(function)
+            // 関数の定義・宣言
+            if let parts = typeName.functionParts, current.isPunctuator(.leftBrace) || current.isPunctuator(.semicolon) {
+                if match(.semicolon) {
+                    return .function(FunctionDeclaration(name: declarator.name,
+                                                         returnType: TypeName(parts.returns, location: declarator.location),
+                                                         parameters: parts.parameters,
+                                                         isVariadic: parts.isVariadic,
+                                                         body: nil,
+                                                         location: declarator.location))
+                }
+                let body = try parseCompoundStatement()
+                guard case .compound(let statements, _) = body else { throw AbortCompilation() }
+                return .function(FunctionDeclaration(name: declarator.name,
+                                                     returnType: TypeName(parts.returns, location: declarator.location),
+                                                     parameters: parts.parameters,
+                                                     isVariadic: parts.isVariadic,
+                                                     body: statements,
+                                                     location: declarator.location))
             }
 
             var initializer: Initializer?
             if match(.assign) {
                 initializer = try parseInitializer()
             }
-            declarations.append(VariableDeclaration(name: declarator.name, type: type,
+            declarations.append(VariableDeclaration(name: declarator.name, type: typeName,
                                                     initializer: initializer, isStatic: isStatic,
                                                     location: declarator.location))
         } while match(.comma)
 
         try expect(.semicolon, "宣言の終わり")
-        // struct 定義と変数宣言が同じ行にある場合も、変数宣言として返す
-        // (struct 本体は parseDeclarationSpecifiers の中で登録済み)
         return .globalVariables(declarations, startLocation)
-    }
-
-    private mutating func parseFunctionRest(name: String, returnType: TypeName,
-                                            location: SourceLocation) throws -> FunctionDeclaration {
-        try expect(.leftParen, "引数リストの始まり")
-        var parameters: [FunctionParameter] = []
-        var isVariadic = false
-
-        if !current.isPunctuator(.rightParen) {
-            if current.isKeyword(.void), peek(1).isPunctuator(.rightParen) {
-                advance()
-            } else {
-                repeat {
-                    if current.isPunctuator(.ellipsis) {
-                        advance()
-                        isVariadic = true
-                        break
-                    }
-                    let parameterLocation = current.location
-                    let (specifier, _) = try parseDeclarationSpecifiers()
-                    let declarator = try parseDeclarator(context: "引数", allowAnonymous: true)
-                    let type = TypeName(specifier: specifier, pointerDepth: declarator.pointerDepth,
-                                        arrayCounts: declarator.arrayCounts, location: parameterLocation)
-                    parameters.append(FunctionParameter(name: declarator.name, type: type,
-                                                        location: parameterLocation))
-                } while match(.comma)
-            }
-        }
-        try expect(.rightParen, "引数リストの終わり")
-
-        if match(.semicolon) {
-            return FunctionDeclaration(name: name, returnType: returnType, parameters: parameters,
-                                       isVariadic: isVariadic, body: nil, location: location)
-        }
-
-        let body = try parseCompoundStatement()
-        guard case .compound(let statements, _) = body else {
-            return FunctionDeclaration(name: name, returnType: returnType, parameters: parameters,
-                                       isVariadic: isVariadic, body: [], location: location)
-        }
-        return FunctionDeclaration(name: name, returnType: returnType, parameters: parameters,
-                                   isVariadic: isVariadic, body: statements, location: location)
     }
 
     // MARK: - 型指定
@@ -225,6 +211,8 @@ struct Parser {
     /// 解析中に見つけた struct / enum の定義 (呼び出し側が回収する)。
     private(set) var collectedStructs: [StructDefinition] = []
     private(set) var collectedEnums: [EnumDefinition] = []
+    /// `typedef A B, C;` のように 1 行で複数書かれたときの 2 つ目以降と、関数の中の typedef。
+    private var pendingTypedefs: [TopLevelDeclaration] = []
 
     private func isTypeSpecifierStart(_ token: Token) -> Bool {
         switch token.kind {
@@ -263,13 +251,8 @@ struct Parser {
                     advance()
                 case .structKeyword, .union:
                     let isUnion = keyword == .union
-                    let keywordLocation = current.location
                     advance()
-                    if isUnion {
-                        diagnostics.error("union にはまだ対応していません (struct として解釈すると値が壊れます)。",
-                                          at: keywordLocation)
-                    }
-                    specifier = try parseStructSpecifier()
+                    specifier = try parseStructSpecifier(isUnion: isUnion)
                     break loop
                 case .enumKeyword:
                     advance()
@@ -310,7 +293,7 @@ struct Parser {
         return (isUnsigned ? .uint : .int, isStatic)
     }
 
-    private mutating func parseStructSpecifier() throws -> TypeSpecifier {
+    private mutating func parseStructSpecifier(isUnion: Bool = false) throws -> TypeSpecifier {
         var name: String
         let location = current.location
         if let identifier = current.identifier {
@@ -318,7 +301,7 @@ struct Parser {
             advance()
         } else {
             anonymousCounter += 1
-            name = "匿名構造体\(anonymousCounter)"
+            name = (isUnion ? "匿名共用体" : "匿名構造体") + "\(anonymousCounter)"
         }
 
         guard current.isPunctuator(.leftBrace) else {
@@ -330,9 +313,8 @@ struct Parser {
         while !current.isPunctuator(.rightBrace), !isAtEnd {
             let (memberSpecifier, _) = try parseDeclarationSpecifiers()
             repeat {
-                let declarator = try parseDeclarator(context: "構造体のメンバー")
-                let type = TypeName(specifier: memberSpecifier, pointerDepth: declarator.pointerDepth,
-                                    arrayCounts: declarator.arrayCounts, location: declarator.location)
+                let declarator = try parseDeclarator(context: "構造体のメンバー", base: memberSpecifier)
+                let type = TypeName(declarator.type, location: declarator.location)
                 members.append(VariableDeclaration(name: declarator.name, type: type, initializer: nil,
                                                    isStatic: false, location: declarator.location))
             } while match(.comma)
@@ -340,7 +322,7 @@ struct Parser {
         }
         try expect(.rightBrace, "構造体の終わり")
 
-        let definition = StructDefinition(name: name, members: members, location: location)
+        let definition = StructDefinition(name: name, members: members, isUnion: isUnion, location: location)
         pendingStructs[name] = definition
         collectedStructs.append(definition)
         return .structure(name)
@@ -389,49 +371,130 @@ struct Parser {
 
     // MARK: - 宣言子
 
+    /// 宣言子の形 (`*p[3]`, `(*f)(int)` など) をそのまま木にしたもの。
+    private indirect enum DeclaratorNode {
+        case name(String, SourceLocation)
+        case pointer(DeclaratorNode)
+        case array(DeclaratorNode, Int?)
+        case function(DeclaratorNode, [FunctionParameter], Bool)
+    }
+
     private struct Declarator {
         var name: String
-        var pointerDepth: Int
-        var arrayCounts: [Int?]
+        var type: TypeRef
         var location: SourceLocation
     }
 
-    private mutating func parseDeclarator(context: String, allowAnonymous: Bool = false) throws -> Declarator {
-        var pointerDepth = 0
+    /// 宣言子を読み、基底型と組み合わせて完全な型にする。
+    private mutating func parseDeclarator(context: String, base: TypeSpecifier,
+                                          allowAnonymous: Bool = false) throws -> Declarator {
+        let node = try parseDeclaratorNode(context: context, allowAnonymous: allowAnonymous)
+        return resolve(node, base: .base(base))
+    }
+
+    private mutating func parseDeclaratorNode(context: String,
+                                              allowAnonymous: Bool) throws -> DeclaratorNode {
+        var pointerCount = 0
         while match(.star) {
-            pointerDepth += 1
+            pointerCount += 1
             while current.isKeyword(.constKeyword) || current.isKeyword(.volatile) { advance() }
         }
 
-        var name = ""
-        let location = current.location
-        if let identifier = current.identifier {
-            name = identifier
+        var node: DeclaratorNode
+        // 括弧でくくられた宣言子 (関数ポインタなど)
+        if current.isPunctuator(.leftParen),
+           peek(1).isPunctuator(.star) || peek(1).isPunctuator(.leftParen)
+            || (peek(1).identifier != nil && !isTypeSpecifierStart(peek(1))) {
             advance()
-        } else if !allowAnonymous {
+            node = try parseDeclaratorNode(context: context, allowAnonymous: allowAnonymous)
+            try expect(.rightParen, "宣言子の括弧の後ろ")
+        } else if let identifier = current.identifier {
+            node = .name(identifier, current.location)
+            advance()
+        } else if allowAnonymous {
+            node = .name("", current.location)
+        } else {
             diagnostics.error("\(context)に名前が必要です (見つかったのは \(current.text))。", at: current.location)
             throw AbortCompilation()
         }
 
-        var arrayCounts: [Int?] = []
-        while current.isPunctuator(.leftBracket) {
-            advance()
-            if current.isPunctuator(.rightBracket) {
+        // 後置 (配列・関数)
+        while true {
+            if current.isPunctuator(.leftBracket) {
                 advance()
-                arrayCounts.append(nil)
-                continue
-            }
-            let expression = try parseConditionalExpression()
-            try expect(.rightBracket, "配列の大きさの後ろ")
-            if let value = foldConstant(expression) {
-                arrayCounts.append(Int(value))
+                if current.isPunctuator(.rightBracket) {
+                    advance()
+                    node = .array(node, nil)
+                    continue
+                }
+                let expression = try parseConditionalExpression()
+                try expect(.rightBracket, "配列の大きさの後ろ")
+                if let value = foldConstant(expression) {
+                    node = .array(node, Int(value))
+                } else {
+                    diagnostics.error("配列の大きさは定数でなければなりません。", at: expression.location)
+                    node = .array(node, 0)
+                }
+            } else if current.isPunctuator(.leftParen) {
+                advance()
+                let (parameters, isVariadic) = try parseParameterList()
+                node = .function(node, parameters, isVariadic)
             } else {
-                diagnostics.error("配列の大きさは定数でなければなりません。", at: expression.location)
-                arrayCounts.append(0)
+                break
             }
         }
 
-        return Declarator(name: name, pointerDepth: pointerDepth, arrayCounts: arrayCounts, location: location)
+        for _ in 0..<pointerCount {
+            node = .pointer(node)
+        }
+        return node
+    }
+
+    /// `(` を読んだ後の引数リスト。
+    private mutating func parseParameterList() throws -> ([FunctionParameter], Bool) {
+        var parameters: [FunctionParameter] = []
+        var isVariadic = false
+
+        if current.isPunctuator(.rightParen) {
+            advance()
+            return (parameters, isVariadic)
+        }
+        if current.isKeyword(.void), peek(1).isPunctuator(.rightParen) {
+            advance()
+            advance()
+            return (parameters, isVariadic)
+        }
+
+        repeat {
+            if current.isPunctuator(.ellipsis) {
+                advance()
+                isVariadic = true
+                break
+            }
+            let location = current.location
+            let (specifier, _) = try parseDeclarationSpecifiers()
+            let declarator = try parseDeclarator(context: "引数", base: specifier, allowAnonymous: true)
+            parameters.append(FunctionParameter(name: declarator.name,
+                                                type: TypeName(declarator.type, location: location),
+                                                location: location))
+        } while match(.comma)
+
+        try expect(.rightParen, "引数リストの終わり")
+        return (parameters, isVariadic)
+    }
+
+    /// 宣言子の木を、内側から基底型に適用していく。
+    private func resolve(_ node: DeclaratorNode, base: TypeRef) -> Declarator {
+        switch node {
+        case .name(let name, let location):
+            return Declarator(name: name, type: base, location: location)
+        case .pointer(let inner):
+            return resolve(inner, base: .pointer(base))
+        case .array(let inner, let count):
+            return resolve(inner, base: .array(base, count: count))
+        case .function(let inner, let parameters, let isVariadic):
+            return resolve(inner, base: .function(base, parameters: parameters, isVariadic: isVariadic))
+        }
     }
 
     /// 定数式を畳み込む (配列の大きさ、enum の値、case ラベル用)。
@@ -533,14 +596,24 @@ struct Parser {
                 try expect(.semicolon, "return の後ろ")
                 return .returnStmt(value, location)
             case .gotoKeyword:
-                diagnostics.error("goto には対応していません。", at: location)
-                throw AbortCompilation()
+                advance()
+                let (label, _) = try expectIdentifier("goto の飛び先")
+                try expect(.semicolon, "goto の後ろ")
+                return .gotoStmt(label, location)
             default:
                 break
             }
         }
         if isTypeSpecifierStart(current) {
             return try parseDeclarationStatement()
+        }
+
+        // ラベル (`name:`) — goto の飛び先
+        if let label = current.identifier, peek(1).isPunctuator(.colon) {
+            advance()
+            advance()
+            let statement = try parseStatement()
+            return .labeled(label, statement, location)
         }
 
         let expression = try parseExpression()
@@ -550,12 +623,26 @@ struct Parser {
 
     private mutating func parseDeclarationStatement() throws -> Stmt {
         let location = current.location
+        if current.isKeyword(.typedef) {
+            advance()
+            let (typedefSpecifier, _) = try parseDeclarationSpecifiers()
+            repeat {
+                let declarator = try parseDeclarator(context: "typedef", base: typedefSpecifier)
+                typedefNames.insert(declarator.name)
+                pendingTypedefs.append(.typedefDefinition(name: declarator.name,
+                                                          type: TypeName(declarator.type,
+                                                                         location: declarator.location),
+                                                          declarator.location))
+            } while match(.comma)
+            try expect(.semicolon, "typedef の終わり")
+            return .expression(nil, location)
+        }
+
         let (specifier, isStatic) = try parseDeclarationSpecifiers()
         var declarations: [VariableDeclaration] = []
         repeat {
-            let declarator = try parseDeclarator(context: "変数宣言")
-            let type = TypeName(specifier: specifier, pointerDepth: declarator.pointerDepth,
-                                arrayCounts: declarator.arrayCounts, location: declarator.location)
+            let declarator = try parseDeclarator(context: "変数宣言", base: specifier)
+            let type = TypeName(declarator.type, location: declarator.location)
             var initializer: Initializer?
             if match(.assign) {
                 initializer = try parseInitializer()
@@ -792,29 +879,12 @@ struct Parser {
         return try parseUnaryExpression()
     }
 
-    /// `int *` や `struct Point *` のような、名前のない型。
+    /// `int *` や `int (*)(int)` のような、名前のない型。
     private mutating func parseTypeName() throws -> TypeName {
         let location = current.location
         let (specifier, _) = try parseDeclarationSpecifiers()
-        var pointerDepth = 0
-        while match(.star) {
-            pointerDepth += 1
-            while current.isKeyword(.constKeyword) || current.isKeyword(.volatile) { advance() }
-        }
-        var arrayCounts: [Int?] = []
-        while current.isPunctuator(.leftBracket) {
-            advance()
-            if current.isPunctuator(.rightBracket) {
-                advance()
-                arrayCounts.append(nil)
-                continue
-            }
-            let expression = try parseConditionalExpression()
-            try expect(.rightBracket, "配列の大きさの後ろ")
-            arrayCounts.append(foldConstant(expression).map(Int.init))
-        }
-        return TypeName(specifier: specifier, pointerDepth: pointerDepth,
-                        arrayCounts: arrayCounts, location: location)
+        let declarator = try parseDeclarator(context: "型", base: specifier, allowAnonymous: true)
+        return TypeName(declarator.type, location: location)
     }
 
     private mutating func parseUnaryExpression() throws -> Expr {
@@ -868,6 +938,14 @@ struct Parser {
                 let indexExpression = try parseExpression()
                 try expect(.rightBracket, "添字の後ろ")
                 expression = .subscriptExpr(expression, indexExpression, location)
+            } else if current.isPunctuator(.leftParen),
+                      case .identifier("va_arg", _) = expression {
+                advance()
+                let list = try parseAssignmentExpression()
+                try expect(.comma, "va_arg の型の前")
+                let typeName = try parseTypeName()
+                try expect(.rightParen, "va_arg の後ろ")
+                expression = .vaArg(list, typeName, location)
             } else if match(.leftParen) {
                 var arguments: [Expr] = []
                 if !current.isPunctuator(.rightParen) {

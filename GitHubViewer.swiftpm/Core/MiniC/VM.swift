@@ -46,6 +46,8 @@ public struct MiniCLimits {
 /// 実行結果。
 public struct MiniCRunResult: Equatable {
     public var output: String
+    /// stderr に書かれた内容。
+    public var errorOutput: String = ""
     public var exitCode: Int32
     /// 異常終了したときの説明 (正常なら nil)。
     public var runtimeError: String?
@@ -61,7 +63,14 @@ public final class MiniCVM {
         var savedFramePointer: Int
         var savedStackPointer: Int
         var functionIndex: Int
+        /// `...` で渡された引数。
+        var variadicArguments: [Value] = []
+        /// 構造体を返す関数のための、呼び出し側が用意した置き場所。
+        var aggregateDestination: Int = 0
     }
+
+    /// 関数ポインタの値はこのビットを立てて表す (メモリのアドレスと区別するため)。
+    private static let functionTag: Int64 = 0x4000_0000_0000_0000
 
     private struct RuntimeError: Error {
         var message: String
@@ -88,6 +97,7 @@ public final class MiniCVM {
     private let stackEnd: Int
 
     private var output = Data()
+    private var errorOutput = Data()
     private var outputOverflowed = false
     private var inputCharacters: [Character]
     private var inputPosition = 0
@@ -134,7 +144,9 @@ public final class MiniCVM {
         if outputOverflowed {
             text += "\n…出力が上限 (\(limits.maximumOutputBytes) バイト) に達したので打ち切りました。"
         }
-        return MiniCRunResult(output: text, exitCode: exitCode, runtimeError: error, executedSteps: steps)
+        let errorText = String(decoding: errorOutput, as: UTF8.self)
+        return MiniCRunResult(output: text, errorOutput: errorText, exitCode: exitCode,
+                              runtimeError: error, executedSteps: steps)
     }
 
     private func describe(_ error: RuntimeError) -> String {
@@ -326,8 +338,25 @@ public final class MiniCVM {
         case .jumpIfNotZero(let target):
             if try pop().int != 0 { programCounter = target }
 
+        case .pushFunction(let index):
+            operandStack.append(.integer(MiniCVM.functionTag | Int64(index + 1)))
+
         case .call(let function, let argumentCount):
             try callFunction(index: function, argumentCount: argumentCount)
+
+        case .callIndirect(let argumentCount):
+            let callee = try pop()
+            try callFunctionValue(callee, argumentCount: argumentCount)
+
+        case .vaArg(let isDouble):
+            let address = try popAddress()
+            let index = Int(try readInteger(at: address, size: 8))
+            guard let frame = frames.last, index >= 0, index < frame.variadicArguments.count else {
+                throw RuntimeError(message: "va_arg で引数を取りすぎました。")
+            }
+            let value = frame.variadicArguments[index]
+            try writeInteger(Int64(index + 1), at: address, size: 8)
+            operandStack.append(isDouble ? .number(value.double) : .integer(value.int))
         case .callBuiltin(let builtin, let argumentCount):
             guard let builtin = Builtin(rawValue: builtin) else {
                 throw RuntimeError(message: "知らない組み込み関数です。")
@@ -335,7 +364,16 @@ public final class MiniCVM {
             try callBuiltin(builtin, argumentCount: argumentCount)
 
         case .returnValue:
-            let value = try pop()
+            var value = try pop()
+            if let frame = frames.last, frame.functionIndex < program.functions.count,
+               program.functions[frame.functionIndex].returnsAggregate {
+                let size = program.functions[frame.functionIndex].returnSize
+                let destination = frame.aggregateDestination
+                if destination != 0 {
+                    try copyMemory(from: Int(value.int), to: destination, size: size)
+                    value = .integer(Int64(destination))
+                }
+            }
             try returnFromFunction()
             operandStack.append(value)
         case .returnVoid:
@@ -421,6 +459,17 @@ public final class MiniCVM {
         }
         arguments.reverse()
 
+        // 構造体を返す関数は、先頭の引数が置き場所のアドレス
+        var aggregateDestination = 0
+        if function.returnsAggregate, !arguments.isEmpty {
+            aggregateDestination = Int(arguments.removeFirst().int)
+        }
+        var variadicArguments: [Value] = []
+        if arguments.count > function.parameters.count {
+            variadicArguments = Array(arguments[function.parameters.count...])
+            arguments = Array(arguments[..<function.parameters.count])
+        }
+
         let newFramePointer = TypeContext.align(stackPointer, to: 16)
         guard newFramePointer + function.frameSize <= stackEnd else {
             throw RuntimeError(message: "スタックがあふれました。再帰が深すぎるか、ローカル変数が大きすぎます。")
@@ -429,7 +478,9 @@ public final class MiniCVM {
         frames.append(Frame(returnAddress: programCounter,
                             savedFramePointer: framePointer,
                             savedStackPointer: stackPointer,
-                            functionIndex: index))
+                            functionIndex: index,
+                            variadicArguments: variadicArguments,
+                            aggregateDestination: aggregateDestination))
         if function.frameSize > 0 {
             for offset in 0..<function.frameSize {
                 memory[newFramePointer + offset] = 0
@@ -452,6 +503,30 @@ public final class MiniCVM {
         }
 
         programCounter = function.entry
+    }
+
+    /// 関数ポインタの値から呼び出す。
+    private func callFunctionValue(_ callee: Value, argumentCount: Int) throws {
+        let raw = callee.int
+        guard raw & MiniCVM.functionTag != 0 else {
+            throw RuntimeError(message: raw == 0 ? "NULL の関数ポインタを呼び出しました。"
+                               : "関数ポインタではない値を呼び出しました。")
+        }
+        let index = Int(raw & ~MiniCVM.functionTag) - 1
+        try callFunction(index: index, argumentCount: argumentCount)
+    }
+
+    /// 組み込み関数の中から、C の関数を呼び出して結果を受け取る (qsort の比較関数など)。
+    private func invoke(_ callee: Value, _ arguments: [Value]) throws -> Value {
+        let depth = frames.count
+        for argument in arguments {
+            operandStack.append(argument)
+        }
+        try callFunctionValue(callee, argumentCount: arguments.count)
+        while frames.count > depth {
+            try step()
+        }
+        return operandStack.popLast() ?? .integer(0)
     }
 
     private func returnFromFunction() throws {
@@ -633,9 +708,15 @@ public final class MiniCVM {
 
     // MARK: - 組み込み関数
 
-    private func write(_ text: String) {
+    private func write(_ text: String, toError: Bool = false) {
         guard !outputOverflowed else { return }
         let bytes = Data(text.utf8)
+        if toError {
+            if errorOutput.count + bytes.count <= limits.maximumOutputBytes {
+                errorOutput.append(bytes)
+            }
+            return
+        }
         if output.count + bytes.count > limits.maximumOutputBytes {
             let remaining = max(0, limits.maximumOutputBytes - output.count)
             output.append(bytes.prefix(remaining))
@@ -852,6 +933,314 @@ public final class MiniCVM {
         case .log: pushNumber(Foundation.log(number(0)))
         case .log10: pushNumber(Foundation.log10(number(0)))
         case .exp: pushNumber(Foundation.exp(number(0)))
+
+        // ---- 文字列に書き出す printf ----
+        case .sprintf, .snprintf:
+            let destination = Int(integer(0))
+            let formatIndex = builtin == .sprintf ? 1 : 2
+            let limit = builtin == .snprintf ? Int(integer(1)) : Int.max
+            let format = readCString(at: integer(formatIndex))
+            var text = FormatPrinter.render(format: format,
+                                            arguments: Array(arguments.dropFirst(formatIndex + 1)),
+                                            readString: { [weak self] address in
+                                                self?.readCString(at: address) ?? ""
+                                            })
+            let produced = text.utf8.count
+            if builtin == .snprintf, limit > 0, produced > limit - 1 {
+                text = String(decoding: Array(text.utf8).prefix(limit - 1), as: UTF8.self)
+            }
+            try writeCString(text, at: destination)
+            push(Int64(produced))
+
+        // ---- ファイル (stdout / stderr) ----
+        case .fprintf:
+            let stream = integer(0)
+            let format = readCString(at: integer(1))
+            let text = FormatPrinter.render(format: format,
+                                            arguments: Array(arguments.dropFirst(2)),
+                                            readString: { [weak self] address in
+                                                self?.readCString(at: address) ?? ""
+                                            })
+            write(text, toError: stream == 2)
+            push(Int64(text.utf8.count))
+
+        case .fputs:
+            let text = readCString(at: integer(0))
+            write(text, toError: integer(1) == 2)
+            push(Int64(text.utf8.count))
+
+        case .fputc:
+            let value = integer(0)
+            write(String(Character(UnicodeScalar(UInt8(truncatingIfNeeded: value)))), toError: integer(1) == 2)
+            push(value)
+
+        case .fflush:
+            push(0)
+
+        // ---- 文字列 ----
+        case .strstr:
+            let haystackAddress = integer(0)
+            let haystack = Array(readCString(at: haystackAddress).utf8)
+            let needle = Array(readCString(at: integer(1)).utf8)
+            if needle.isEmpty {
+                push(haystackAddress)
+            } else if haystack.count >= needle.count {
+                var found: Int64 = 0
+                for start in 0...(haystack.count - needle.count)
+                where Array(haystack[start..<(start + needle.count)]) == needle {
+                    found = haystackAddress + Int64(start)
+                    break
+                }
+                push(found)
+            } else {
+                push(0)
+            }
+
+        case .strrchr:
+            let base = integer(0)
+            let text = Array(readCString(at: base).utf8)
+            let target = UInt8(truncatingIfNeeded: integer(1))
+            if let position = text.lastIndex(of: target) {
+                push(base + Int64(position))
+            } else if target == 0 {
+                push(base + Int64(text.count))
+            } else {
+                push(0)
+            }
+
+        case .strdup:
+            let text = readCString(at: integer(0))
+            let bytes = Array(text.utf8)
+            let pointer = allocate(bytes.count + 1)
+            if pointer != 0 { try writeCString(text, at: pointer) }
+            push(Int64(pointer))
+
+        case .strncat:
+            let destination = Int(integer(0))
+            let existing = readCString(at: integer(0))
+            let addition = String(readCString(at: integer(1)).prefix(Int(integer(2))))
+            try writeCString(existing + addition, at: destination)
+            push(Int64(destination))
+
+        case .memcmp:
+            let left = Int(integer(0))
+            let right = Int(integer(1))
+            let size = Int(integer(2))
+            try checkAccess(address: left, size: size)
+            try checkAccess(address: right, size: size)
+            var result: Int64 = 0
+            for offset in 0..<size where memory[left + offset] != memory[right + offset] {
+                result = memory[left + offset] < memory[right + offset] ? -1 : 1
+                break
+            }
+            push(result)
+
+        case .strtol:
+            let base = integer(0)
+            let text = Array(readCString(at: base))
+            var position = 0
+            while position < text.count, text[position].isWhitespace { position += 1 }
+            var sign: Int64 = 1
+            if position < text.count, text[position] == "-" || text[position] == "+" {
+                if text[position] == "-" { sign = -1 }
+                position += 1
+            }
+            var radix = Int(integer(2))
+            if radix == 0 {
+                if position + 1 < text.count, text[position] == "0",
+                   text[position + 1] == "x" || text[position + 1] == "X" {
+                    radix = 16
+                    position += 2
+                } else if position < text.count, text[position] == "0" {
+                    radix = 8
+                } else {
+                    radix = 10
+                }
+            } else if radix == 16, position + 1 < text.count, text[position] == "0",
+                      text[position + 1] == "x" || text[position + 1] == "X" {
+                position += 2
+            }
+            var value: Int64 = 0
+            var consumedDigits = 0
+            while position < text.count,
+                  let digit = text[position].hexDigitValue, digit < radix {
+                value = value &* Int64(radix) &+ Int64(digit)
+                position += 1
+                consumedDigits += 1
+            }
+            if consumedDigits == 0 { position = 0 }
+            if integer(1) != 0 {
+                try writeInteger(base + Int64(position), at: Int(integer(1)), size: 8)
+            }
+            push(sign * value)
+
+        case .strtod:
+            let base = integer(0)
+            let text = Array(readCString(at: base))
+            var position = 0
+            while position < text.count, text[position].isWhitespace { position += 1 }
+            let start = position
+            if position < text.count, text[position] == "-" || text[position] == "+" { position += 1 }
+            while position < text.count, text[position].isNumber { position += 1 }
+            if position < text.count, text[position] == "." {
+                position += 1
+                while position < text.count, text[position].isNumber { position += 1 }
+            }
+            if position < text.count, text[position] == "e" || text[position] == "E" {
+                var lookahead = position + 1
+                if lookahead < text.count, text[lookahead] == "-" || text[lookahead] == "+" { lookahead += 1 }
+                if lookahead < text.count, text[lookahead].isNumber {
+                    position = lookahead
+                    while position < text.count, text[position].isNumber { position += 1 }
+                }
+            }
+            let numberText = String(text[start..<position])
+            let parsed = Double(numberText) ?? 0
+            if integer(1) != 0 {
+                try writeInteger(base + Int64(parsed == 0 && numberText.isEmpty ? 0 : position),
+                                 at: Int(integer(1)), size: 8)
+            }
+            pushNumber(parsed)
+
+        case .atol:
+            let text = readCString(at: integer(0)).trimmingCharacters(in: .whitespaces)
+            var digits = ""
+            for character in text {
+                if character == "-" || character == "+", digits.isEmpty {
+                    digits.append(character)
+                } else if character.isNumber {
+                    digits.append(character)
+                } else {
+                    break
+                }
+            }
+            push(Int64(digits) ?? 0)
+
+        // ---- 文字の種類 ----
+        case .isalpha, .isdigit, .isalnum, .isspace, .isupper, .islower, .ispunct:
+            let value = integer(0)
+            guard value >= 0, value < 128, let scalar = UnicodeScalar(UInt32(value)) else {
+                push(0)
+                break
+            }
+            let character = Character(scalar)
+            let result: Bool
+            switch builtin {
+            case .isalpha: result = character.isLetter
+            case .isdigit: result = character.isNumber
+            case .isalnum: result = character.isLetter || character.isNumber
+            case .isspace: result = character.isWhitespace
+            case .isupper: result = character.isUppercase
+            case .islower: result = character.isLowercase
+            default: result = character.isPunctuation || character.isSymbol
+            }
+            push(result ? 1 : 0)
+
+        case .toupper, .tolower:
+            let value = integer(0)
+            guard value >= 0, value < 128, let scalar = UnicodeScalar(UInt32(value)) else {
+                push(value)
+                break
+            }
+            let character = Character(scalar)
+            let converted = builtin == .toupper ? character.uppercased() : character.lowercased()
+            push(Int64(converted.unicodeScalars.first?.value ?? UInt32(value)))
+
+        // ---- 並べ替えと二分探索 (比較関数を呼び戻す) ----
+        case .qsort:
+            let base = Int(integer(0))
+            let count = Int(integer(1))
+            let size = Int(integer(2))
+            let comparator = arguments.count > 3 ? arguments[3] : .integer(0)
+            guard count > 0, size > 0 else { break }
+            try checkAccess(address: base, size: count * size)
+            var elements: [[UInt8]] = (0..<count).map { index in
+                Array(memory[(base + index * size)..<(base + (index + 1) * size)])
+            }
+            // 比較関数を呼ぶために、一時領域に 2 要素を置いて渡す
+            let scratch = allocate(size * 2)
+            guard scratch != 0 else { throw RuntimeError(message: "qsort の作業領域を確保できませんでした。") }
+            try elements.sortWithComparator { left, right in
+                for offset in 0..<size {
+                    memory[scratch + offset] = left[offset]
+                    memory[scratch + size + offset] = right[offset]
+                }
+                let result = try invoke(comparator, [.integer(Int64(scratch)), .integer(Int64(scratch + size))])
+                return result.int
+            }
+            try deallocate(scratch)
+            for (index, element) in elements.enumerated() {
+                for offset in 0..<size {
+                    memory[base + index * size + offset] = element[offset]
+                }
+            }
+
+        case .bsearch:
+            let key = Int64(integer(0))
+            let base = Int(integer(1))
+            let count = Int(integer(2))
+            let size = Int(integer(3))
+            let comparator = arguments.count > 4 ? arguments[4] : .integer(0)
+            var low = 0
+            var high = count - 1
+            var found: Int64 = 0
+            while low <= high {
+                let middle = (low + high) / 2
+                let element = Int64(base + middle * size)
+                let result = try invoke(comparator, [.integer(key), .integer(element)]).int
+                if result == 0 {
+                    found = element
+                    break
+                }
+                if result < 0 { high = middle - 1 } else { low = middle + 1 }
+            }
+            push(found)
+
+        case .assertFailed:
+            let message = readCString(at: integer(0))
+            write("assertion failed: \(message) (\(integer(1)) 行目)\n", toError: true)
+            throw ExitSignal(code: 134)
+        }
+    }
+}
+
+
+extension Array {
+    /// 例外を投げる比較関数でも使える単純なマージソート (安定)。
+    mutating func sortWithComparator(_ compare: (Element, Element) throws -> Int64) rethrows {
+        guard count > 1 else { return }
+        var buffer = self
+        try mergeSort(&self, &buffer, 0, count, compare)
+    }
+
+    private func mergeSort(_ values: inout [Element], _ buffer: inout [Element],
+                           _ start: Int, _ end: Int,
+                           _ compare: (Element, Element) throws -> Int64) rethrows {
+        guard end - start > 1 else { return }
+        let middle = (start + end) / 2
+        try mergeSort(&values, &buffer, start, middle, compare)
+        try mergeSort(&values, &buffer, middle, end, compare)
+        var left = start
+        var right = middle
+        var index = start
+        while left < middle || right < end {
+            if left >= middle {
+                buffer[index] = values[right]
+                right += 1
+            } else if right >= end {
+                buffer[index] = values[left]
+                left += 1
+            } else if try compare(values[right], values[left]) < 0 {
+                buffer[index] = values[right]
+                right += 1
+            } else {
+                buffer[index] = values[left]
+                left += 1
+            }
+            index += 1
+        }
+        for position in start..<end {
+            values[position] = buffer[position]
         }
     }
 }

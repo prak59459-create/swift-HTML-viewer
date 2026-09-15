@@ -19,6 +19,8 @@ public enum MiniC {
         public var warningCount: Int
         public var errorCount: Int
         public var output: String
+        /// stderr に書かれた内容。
+        public var errorOutput: String
         public var exitCode: Int32
         public var runtimeError: String?
         public var executedSteps: Int
@@ -64,6 +66,7 @@ public enum MiniC {
                              warningCount: build.warnings.count,
                              errorCount: 0,
                              output: result.output,
+                             errorOutput: result.errorOutput,
                              exitCode: result.exitCode,
                              runtimeError: result.runtimeError,
                              executedSteps: result.executedSteps,
@@ -75,6 +78,7 @@ public enum MiniC {
                              warningCount: failure.diagnostics.count - errors.count,
                              errorCount: errors.count,
                              output: "",
+                             errorOutput: "",
                              exitCode: 1,
                              runtimeError: nil,
                              executedSteps: 0,
@@ -85,6 +89,7 @@ public enum MiniC {
                              warningCount: 0,
                              errorCount: 1,
                              output: "",
+                             errorOutput: "",
                              exitCode: 1,
                              runtimeError: nil,
                              executedSteps: 0,

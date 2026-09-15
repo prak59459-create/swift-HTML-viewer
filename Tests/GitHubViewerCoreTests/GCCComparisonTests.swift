@@ -1,7 +1,7 @@
 import XCTest
 @testable import GitHubViewerCore
 
-/// `Examples/c/` にある C プログラムを内蔵コンパイラで実行し、
+/// `Examples/c/` にある C プログラム (40 本) を内蔵コンパイラで実行し、
 /// `Examples/c/expected/` に置いた期待出力と一致することを確かめる。
 ///
 /// 期待出力は GCC 13.3 (`gcc -std=c99`) で同じソースをコンパイル・実行して作ったもの。
@@ -21,7 +21,7 @@ final class GCCComparisonTests: XCTestCase {
         let files = try fileManager.contentsOfDirectory(atPath: directory.path)
             .filter { $0.hasSuffix(".c") }
             .sorted()
-        XCTAssertGreaterThanOrEqual(files.count, 30, "サンプルが見つかりません: \(directory.path)")
+        XCTAssertGreaterThanOrEqual(files.count, 40, "サンプルが見つかりません: \(directory.path)")
 
         for file in files {
             let name = String(file.dropLast(2))

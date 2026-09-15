@@ -57,7 +57,13 @@ public enum Instruction: Equatable {
     case jumpIfZero(Int)
     case jumpIfNotZero(Int)
 
+    /// 関数そのものを値として積む (関数ポインタ)。
+    case pushFunction(Int)
     case call(function: Int, argumentCount: Int)
+    /// スタックの一番上にある関数ポインタを呼ぶ。
+    case callIndirect(argumentCount: Int)
+    /// 可変長引数を 1 つ取り出す ([va_list のアドレス] → [値])。
+    case vaArg(isDouble: Bool)
     case callBuiltin(builtin: Int, argumentCount: Int)
     case returnValue
     case returnVoid
@@ -80,6 +86,11 @@ public struct FunctionInfo: Equatable {
     public var frameSize: Int
     public var parameters: [ParameterInfo]
     public var returnsVoid: Bool
+    /// 構造体を値で返す関数 (呼び出し側が置き場所のアドレスを最初に渡す)。
+    public var returnsAggregate: Bool = false
+    public var returnSize: Int = 0
+    /// `...` を持つ関数。
+    public var isVariadic: Bool = false
 }
 
 /// コンパイル結果。
@@ -166,7 +177,10 @@ public struct MiniCProgram: Equatable {
         case .jump(let target): return "jmp       \(target)"
         case .jumpIfZero(let target): return "jz        \(target)"
         case .jumpIfNotZero(let target): return "jnz       \(target)"
+        case .pushFunction(let index): return "pushfn    #\(index)"
         case .call(let function, let count): return "call      #\(function), \(count) 引数"
+        case .callIndirect(let count): return "calli     \(count) 引数"
+        case .vaArg(let isDouble): return "va_arg    \(isDouble ? "double" : "int")"
         case .callBuiltin(let builtin, let count):
             let name = Builtin(rawValue: builtin)?.name ?? "?"
             return "callext   \(name), \(count) 引数"

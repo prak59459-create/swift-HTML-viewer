@@ -900,50 +900,182 @@ final class MiniCTests: XCTestCase {
     }
 }
 
-// MARK: - 未対応機能の報告
+// MARK: - 以前は未対応だった機能
 
 extension MiniCTests {
-    func testGotoIsReportedAsUnsupported() {
-        let execution = MiniC.execute(source: """
+    func testGotoAndLabels() {
+        expect("""
+        #include <stdio.h>
         int main(void) {
             int i = 0;
         again:
             i++;
-            if (i < 3) goto again;
-            return i;
+            if (i < 5) goto again;
+            for (int a = 0; a < 3; a++) {
+                for (int b = 0; b < 3; b++) {
+                    if (a * b == 4) goto done;
+                }
+            }
+        done:
+            printf("%d\\n", i);
+            return 0;
         }
-        """)
-        XCTAssertFalse(execution.compiled)
-        XCTAssertTrue(execution.diagnosticsText.contains("goto"), execution.diagnosticsText)
+        """, output: "5\n")
     }
 
-    func testUnionIsReportedAsUnsupported() {
-        let execution = MiniC.execute(source: """
+    func testUnionSharesStorage() {
+        expect("""
+        #include <stdio.h>
         union Value { int number; char bytes[4]; };
-        int main(void) { return 0; }
-        """)
-        XCTAssertFalse(execution.compiled)
-        XCTAssertTrue(execution.diagnosticsText.contains("union"), execution.diagnosticsText)
-    }
-
-    func testStructReturnIsReportedAsUnsupported() {
-        let execution = MiniC.execute(source: """
-        struct Point { int x; int y; };
-        struct Point makePoint(int x, int y) { struct Point p; p.x = x; p.y = y; return p; }
-        int main(void) { return makePoint(1, 2).x; }
-        """)
-        XCTAssertFalse(execution.compiled)
-        XCTAssertTrue(execution.diagnosticsText.contains("戻り値"), execution.diagnosticsText)
-    }
-
-    func testFunctionPointerCallIsReportedAsUnsupported() {
-        let execution = MiniC.execute(source: """
-        int twice(int n) { return n * 2; }
         int main(void) {
-            int (*f)(int) = twice;
-            return f(3);
+            union Value value;
+            value.number = 0;
+            value.bytes[0] = 1;
+            value.bytes[1] = 2;
+            printf("%d %d %d\\n", value.number, (int)sizeof(union Value), value.bytes[1]);
+            return 0;
+        }
+        """, output: "513 4 2\n")
+    }
+
+    func testStructReturnedByValue() {
+        expect("""
+        #include <stdio.h>
+        struct Point { int x; int y; };
+        struct Point makePoint(int x, int y) {
+            struct Point p;
+            p.x = x;
+            p.y = y;
+            return p;
+        }
+        struct Point add(struct Point a, struct Point b) {
+            return makePoint(a.x + b.x, a.y + b.y);
+        }
+        int main(void) {
+            struct Point sum = add(makePoint(1, 2), makePoint(30, 40));
+            printf("%d %d %d\\n", sum.x, sum.y, makePoint(7, 8).y);
+            return 0;
+        }
+        """, output: "31 42 8\n")
+    }
+
+    func testFunctionPointers() {
+        expect("""
+        #include <stdio.h>
+        int add(int a, int b) { return a + b; }
+        int multiply(int a, int b) { return a * b; }
+        int apply(int (*operation)(int, int), int a, int b) { return operation(a, b); }
+        int main(void) {
+            int (*table[2])(int, int) = {add, multiply};
+            for (int i = 0; i < 2; i++) printf("%d ", table[i](3, 4));
+            printf("%d\\n", apply(add, 10, 20));
+            return 0;
+        }
+        """, output: "7 12 30\n")
+    }
+
+    func testQsortWithComparator() {
+        expect("""
+        #include <stdio.h>
+        #include <stdlib.h>
+        int descending(const void *a, const void *b) {
+            return *(const int *)b - *(const int *)a;
+        }
+        int main(void) {
+            int values[6] = {5, 1, 4, 2, 6, 3};
+            qsort(values, 6, sizeof(int), descending);
+            for (int i = 0; i < 6; i++) printf("%d", values[i]);
+            printf("\\n");
+            return 0;
+        }
+        """, output: "654321\n")
+    }
+
+    func testVariadicFunction() {
+        expect("""
+        #include <stdio.h>
+        #include <stdarg.h>
+        int sum(int count, ...) {
+            va_list arguments;
+            va_start(arguments, count);
+            int total = 0;
+            for (int i = 0; i < count; i++) total += va_arg(arguments, int);
+            va_end(arguments);
+            return total;
+        }
+        double average(int count, ...) {
+            va_list arguments;
+            va_start(arguments, count);
+            double total = 0;
+            for (int i = 0; i < count; i++) total += va_arg(arguments, double);
+            va_end(arguments);
+            return total / count;
+        }
+        int main(void) {
+            printf("%d %d\\n", sum(3, 1, 2, 3), sum(5, 10, 20, 30, 40, 50));
+            printf("%.2f\\n", average(2, 1.5, 2.5));
+            return 0;
+        }
+        """, output: "6 150\n2.00\n")
+    }
+
+    func testStaticLocalKeepsItsValue() {
+        expect("""
+        #include <stdio.h>
+        int counter(void) {
+            static int count = 10;
+            count++;
+            return count;
+        }
+        int main(void) {
+            printf("%d %d %d\\n", counter(), counter(), counter());
+            return 0;
+        }
+        """, output: "11 12 13\n")
+    }
+
+    func testStringAndCharacterLibrary() {
+        expect("""
+        #include <stdio.h>
+        #include <string.h>
+        #include <ctype.h>
+        int main(void) {
+            char buffer[64];
+            sprintf(buffer, "%s-%d", "id", 42);
+            printf("%s %d\\n", buffer, (int)strlen(buffer));
+            char *found = strstr("hello world", "wor");
+            printf("%s\\n", found);
+            printf("%d%d%d%d\\n", isalpha('a'), isdigit('5'), isspace(' '), isupper('a'));
+            printf("%c%c\\n", toupper('q'), tolower('Q'));
+            return 0;
+        }
+        """, output: "id-42 5\nworld\n1110\nQq\n")
+    }
+
+    func testFprintfToStandardError() {
+        let execution = MiniC.execute(source: """
+        #include <stdio.h>
+        int main(void) {
+            fprintf(stdout, "out %d\\n", 1);
+            fprintf(stderr, "err %d\\n", 2);
+            return 0;
         }
         """)
-        XCTAssertFalse(execution.compiled)
+        XCTAssertTrue(execution.compiled, execution.diagnosticsText)
+        XCTAssertEqual(execution.output, "out 1\n")
+        XCTAssertEqual(execution.errorOutput, "err 2\n")
+    }
+
+    func testTypedefFunctionPointer() {
+        expect("""
+        #include <stdio.h>
+        typedef int (*Operation)(int, int);
+        int subtract(int a, int b) { return a - b; }
+        int main(void) {
+            Operation operation = subtract;
+            printf("%d\\n", operation(10, 4));
+            return 0;
+        }
+        """, output: "6\n")
     }
 }

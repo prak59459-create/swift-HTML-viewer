@@ -35,16 +35,20 @@ let text = try MiniC.disassemble(source: source)  // バイトコードを読む
 
 **型**
 `void` / `char` / `unsigned char` / `int` / `unsigned int` / `long` / `unsigned long` /
-`float`・`double` (どちらも倍精度) / ポインタ / 配列 (多次元) / `struct` / `enum` / `typedef`。
-`signed`・`const`・`volatile`・`static`・`extern` は解析して受け流します。
+`float`・`double` (どちらも倍精度) / ポインタ / 配列 (多次元) / `struct` / `union` / `enum` / `typedef` /
+**関数ポインタ** (`int (*f)(int, int)`、関数ポインタの配列、関数ポインタを返す関数も)。
+`size_t` や `va_list` などの標準の型名も用意してあります。
+`signed`・`const`・`volatile`・`extern` は解析して受け流します。
 
 **宣言**
 グローバル変数 (定数式で初期化、`{...}` と文字列リテラルに対応)、ブロック内のどこでも書けるローカル変数、
-関数のプロトタイプと定義、相互再帰、`struct` の前方参照 (`struct Node { struct Node *next; }`)。
+**`static` なローカル変数** (呼び出しをまたいで値が残る)、関数のプロトタイプと定義、相互再帰、
+`struct` の前方参照 (`struct Node { struct Node *next; }`)、**構造体を値で返す関数**、
+**可変長引数の関数** (`va_list` / `va_start` / `va_arg` / `va_end`)。
 
 **文**
 `if` / `else` / `while` / `do-while` / `for` (初期化に宣言を書ける) / `switch`・`case`・`default`
-(フォールスルーあり) / `break` / `continue` / `return` / ブロック。
+(フォールスルーあり) / `break` / `continue` / `return` / **`goto` とラベル** / ブロック。
 
 **式**
 C の優先順位をそのまま実装しています。代入と複合代入 (`+= -= *= /= %= &= |= ^= <<= >>=`)、
@@ -61,6 +65,10 @@ C の優先順位をそのまま実装しています。代入と複合代入 (`
 `strlen` `strcmp` `strncmp` `strcpy` `strncpy` `strcat` `strchr`
 `memset` `memcpy` `memmove`
 `malloc` `calloc` `realloc` `free`
+`sprintf` `snprintf` `fprintf` `fputs` `fputc` `fflush` (`stdout` / `stderr`)
+`strstr` `strrchr` `strdup` `strncat` `memcmp` `strtol` `strtod` `atol`
+`isalpha` `isdigit` `isalnum` `isspace` `isupper` `islower` `ispunct` `toupper` `tolower`
+`qsort` `bsearch` (比較関数を呼び戻します)
 `abs` `labs` `atoi` `atof` `exit` `rand` `srand` `time`
 `sqrt` `pow` `fabs` `floor` `ceil` `round` `fmod` `sin` `cos` `tan` `atan` `atan2` `log` `log10` `exp`
 
@@ -97,28 +105,29 @@ square:  ; フレーム 4 バイト, 引数 1 個
 
 ## テスト
 
-- `Tests/GitHubViewerCoreTests/MiniCTests.swift` — 言語機能・エラー処理の単体テスト 61 件。
+- `Tests/GitHubViewerCoreTests/MiniCTests.swift` — 言語機能・エラー処理の単体テスト 71 件。
 - `Tests/GitHubViewerCoreTests/GCCComparisonTests.swift` — **GCC との差分テスト**。
-  `Examples/c/` の 30 本のプログラムを内蔵コンパイラで実行し、
+  `Examples/c/` の 40 本のプログラムを内蔵コンパイラで実行し、
   `Examples/c/expected/` に置いた期待出力と 1 バイトも違わないことを確認します。
   期待出力は同じソースを `gcc -std=c99` (GCC 13.3) でコンパイル・実行して作りました。
 
-30 本には、カエサル暗号、構造体の整列、二分探索、ビット演算、ニュートン法、キュー、
+40 本には、カエサル暗号、構造体の整列、二分探索、ビット演算、ニュートン法、キュー、
 素因数分解、行列式、連結リストの反転、ハッシュ関数 (`unsigned long`)、アッカーマン関数、
-`printf` の書式尽くし、再帰下降の電卓などが入っています。
+`printf` の書式尽くし、再帰下降の電卓、`qsort` と比較関数、可変長引数、`union`、
+構造体を返す関数、`goto`、`static` ローカル、関数ポインタのテーブルなどが入っています。
 
 ```bash
-swift test    # 102 tests
+swift test    # 112 tests
 ```
 
 ## まだできないこと
 
-- `goto` とラベル
-- 関数ポインタ、可変長引数を持つユーザー定義関数
-- 構造体を戻り値にする関数 (引数として渡すのは可)
-- `union`、ビットフィールド、`long double`、複素数
+- ビットフィールド、`long double`、複素数、可変長配列 (VLA)
+- 複合リテラル、指示付き初期化子 (`.x = 1`)、`_Generic`
 - 複数ファイルのコンパイルとリンク (1 ファイル単位)
 - `#include` した実際のヘッダの読み込み (標準関数は組み込みで代用)
+- ファイル入出力 (`fopen` など)、`setjmp`、スレッド、アトミック
+- `strtok` のような、内部状態を持つ一部の標準関数
 
-`goto`、関数ポインタ、構造体を返す関数、`union` は、黙って誤動作させずコンパイルエラーとして報告します。
-`float` と `long double` は `double` として扱います。
+`float` と `long double` は `double` として扱います。対応していない構文は、
+黙って誤動作させずコンパイルエラーとして報告します。

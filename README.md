@@ -32,7 +32,7 @@ https://github.com/prak59459-create/swift-html-viewer/tree/main/Examples
 | `Examples/demo.py` | Pyodide (端末内) |
 | `Examples/demo.sql` | sql.js / SQLite (端末内) |
 | `Examples/demo.c` | **内蔵 C コンパイラ** (端末内、設定不要) |
-| `Examples/c/*.c` | 内蔵 C コンパイラ (GCC と出力を突き合わせた 30 本) |
+| `Examples/c/*.c` | 内蔵 C コンパイラ (GCC と出力を突き合わせた 40 本) |
 
 ## できること
 
@@ -67,7 +67,8 @@ iPadOS ではネイティブのコンパイラを同梱できない (実行時�
 | --- | --- |
 | C | 自作のコンパイラ + バイトコード仮想マシン ([docs/MiniC.md](docs/MiniC.md)) |
 
-C89/C99 の実用的な部分 (構造体・ポインタ・配列・`malloc`・`printf`・再帰など) に対応し、
+C99 の実用的な部分をほぼ網羅しています (構造体・共用体・ポインタ・多次元配列・関数ポインタ・
+`goto`・可変長引数・`static` ローカル・構造体の値返し・`malloc`・`printf`・`qsort` など)。
 コンパイルエラーは行と桁つき、実行時エラー (NULL 参照、0 除算、無限ループ) も安全に止めて報告します。
 ツールバーの「逆アセンブル」で、生成されたバイトコードも読めます。
 
@@ -133,25 +134,25 @@ GitHubViewer.swiftpm/        ← Swift Playgrounds で開く App Project
     DisplayMode.swift          表示モード
     HTTP.swift                 URLSession の薄いラッパー
 Package.swift                ← Core を macOS / Linux でテストするためのマニフェスト
-Tests/GitHubViewerCoreTests/ Core のテスト (102 件)
+Tests/GitHubViewerCoreTests/ Core のテスト (112 件)
 Examples/                    動作確認用のサンプル
-  c/                         C のサンプル 30 本 + GCC で作った期待出力
+  c/                         C のサンプル 40 本 + GCC で作った期待出力
 docs/MiniC.md                内蔵 C コンパイラの説明
 ```
 
 `Core` は Foundation だけに依存しているので、Mac や Linux でテストできます。
 
 ```bash
-swift test    # 102 tests
+swift test    # 112 tests
 ```
 
-テストには **GCC との差分テスト**が含まれます。`Examples/c/` の 30 本を内蔵コンパイラで実行し、
+テストには **GCC との差分テスト**が含まれます。`Examples/c/` の 40 本を内蔵コンパイラで実行し、
 同じソースを `gcc -std=c99` でコンパイル・実行した出力と 1 バイトも違わないことを確認しています。
 
 ## 注意
 
 - 開いた HTML / JavaScript はアプリ内の WebView で **実行されます**。信頼できないコードを実行しないでください。
 - 内蔵 C コンパイラはネットワークを使いませんが、Pyodide などの WebView ランタイムは CDN (jsdelivr) から読み込むため、初回はダウンロードに時間がかかります (Ruby は約 16MB、Python は数十 MB)。
-- 内蔵 C コンパイラが対応していない機能 (`goto`、関数ポインタ、構造体を返す関数など) は [docs/MiniC.md](docs/MiniC.md) にまとめてあります。
+- 内蔵 C コンパイラが対応していない機能 (ビットフィールド、VLA、ファイル入出力など) は [docs/MiniC.md](docs/MiniC.md) にまとめてあります。
 - ブランチ名にスラッシュを含む URL (`blob/feature/foo/index.html` など) は、先頭の 1 要素をブランチ名として扱います。
 - 1MB を超えるファイルは API が中身を返さないため、`raw.githubusercontent.com` から取得し直します。

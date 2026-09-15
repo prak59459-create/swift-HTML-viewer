@@ -17,20 +17,42 @@ public enum TypeSpecifier: Equatable {
     case typedefName(String)
 }
 
-/// 宣言に現れる型の書き方 (`int *a[3]` の `int *` + `[3]` の部分)。
+/// 宣言に現れる型 (`int *`, `int[3]`, `int (*)(int, int)` など)。
+/// 宣言子を素直に入れ子で表すことで、関数ポインタも扱える。
+public indirect enum TypeRef: Equatable {
+    case base(TypeSpecifier)
+    case pointer(TypeRef)
+    /// `count` が nil なら `[]` (大きさ省略)。
+    case array(TypeRef, count: Int?)
+    case function(TypeRef, parameters: [FunctionParameter], isVariadic: Bool)
+}
+
+/// 型 + ソース上の位置。
 public struct TypeName: Equatable {
-    public var specifier: TypeSpecifier
-    public var pointerDepth: Int
-    /// 配列の要素数 (外側から順)。`nil` は `[]` (サイズ省略)。
-    public var arrayCounts: [Int?]
+    public var type: TypeRef
     public var location: SourceLocation
 
+    public init(_ type: TypeRef, location: SourceLocation = .unknown) {
+        self.type = type
+        self.location = location
+    }
+
+    /// ポインタと配列だけの単純な型を作る (テストや単純な宣言用)。
     public init(specifier: TypeSpecifier, pointerDepth: Int = 0,
                 arrayCounts: [Int?] = [], location: SourceLocation = .unknown) {
-        self.specifier = specifier
-        self.pointerDepth = pointerDepth
-        self.arrayCounts = arrayCounts
+        var built = TypeRef.base(specifier)
+        for _ in 0..<pointerDepth { built = .pointer(built) }
+        for count in arrayCounts.reversed() { built = .array(built, count: count) }
+        self.type = built
         self.location = location
+    }
+
+    /// 関数型ならその中身を取り出す。
+    public var functionParts: (returns: TypeRef, parameters: [FunctionParameter], isVariadic: Bool)? {
+        if case .function(let returns, let parameters, let isVariadic) = type {
+            return (returns, parameters, isVariadic)
+        }
+        return nil
     }
 }
 
@@ -88,6 +110,8 @@ public indirect enum Expr: Equatable {
     case member(Expr, String, isArrow: Bool, SourceLocation)
     case cast(TypeName, Expr, SourceLocation)
     case sizeofType(TypeName, SourceLocation)
+    /// `va_arg(ap, 型)`
+    case vaArg(Expr, TypeName, SourceLocation)
     case sizeofExpr(Expr, SourceLocation)
     case comma(Expr, Expr, SourceLocation)
 
@@ -108,6 +132,7 @@ public indirect enum Expr: Equatable {
              .member(_, _, _, let location),
              .cast(_, _, let location),
              .sizeofType(_, let location),
+             .vaArg(_, _, let location),
              .sizeofExpr(_, let location),
              .comma(_, _, let location):
             return location
@@ -135,6 +160,9 @@ public struct VariableDeclaration: Equatable {
 
 public indirect enum Stmt: Equatable {
     case expression(Expr?, SourceLocation)
+    /// ラベル付きの文 (goto の飛び先)。
+    case labeled(String, Stmt, SourceLocation)
+    case gotoStmt(String, SourceLocation)
     case declaration([VariableDeclaration], SourceLocation)
     case compound([Stmt], SourceLocation)
     case ifStmt(condition: Expr, then: Stmt, else: Stmt?, SourceLocation)
@@ -149,6 +177,8 @@ public indirect enum Stmt: Equatable {
     public var location: SourceLocation {
         switch self {
         case .expression(_, let location),
+             .labeled(_, _, let location),
+             .gotoStmt(_, let location),
              .declaration(_, let location),
              .compound(_, let location),
              .ifStmt(_, _, _, let location),
@@ -192,6 +222,8 @@ public struct FunctionDeclaration: Equatable {
 public struct StructDefinition: Equatable {
     public var name: String
     public var members: [VariableDeclaration]
+    /// union なら true (全メンバーが同じ場所に重なる)。
+    public var isUnion: Bool
     public var location: SourceLocation
 }
 

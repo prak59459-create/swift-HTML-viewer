@@ -117,6 +117,7 @@ public struct StructLayout: Equatable {
     public var members: [StructMember]
     public var size: Int
     public var alignment: Int
+    public var isUnion: Bool = false
 
     public func member(named name: String) -> StructMember? {
         members.first { $0.name == name }
@@ -176,20 +177,28 @@ final class TypeContext {
         }
     }
 
-    /// 構造体のメンバー配置を計算する。
-    func layout(name: String, members: [(name: String, type: CType)]) -> StructLayout {
+    /// 構造体・共用体のメンバー配置を計算する。
+    func layout(name: String, members: [(name: String, type: CType)], isUnion: Bool = false) -> StructLayout {
         var offset = 0
         var maximumAlignment = 1
+        var maximumSize = 0
         var laidOut: [StructMember] = []
         for member in members {
             let memberAlignment = alignment(of: member.type)
             maximumAlignment = max(maximumAlignment, memberAlignment)
-            offset = TypeContext.align(offset, to: memberAlignment)
-            laidOut.append(StructMember(name: member.name, type: member.type, offset: offset))
-            offset += size(of: member.type)
+            if isUnion {
+                // union は全メンバーが先頭から重なる
+                laidOut.append(StructMember(name: member.name, type: member.type, offset: 0))
+                maximumSize = max(maximumSize, size(of: member.type))
+            } else {
+                offset = TypeContext.align(offset, to: memberAlignment)
+                laidOut.append(StructMember(name: member.name, type: member.type, offset: offset))
+                offset += size(of: member.type)
+            }
         }
-        let total = TypeContext.align(offset, to: maximumAlignment)
-        return StructLayout(name: name, members: laidOut, size: max(total, 1), alignment: maximumAlignment)
+        let total = TypeContext.align(isUnion ? maximumSize : offset, to: maximumAlignment)
+        return StructLayout(name: name, members: laidOut, size: max(total, 1),
+                            alignment: maximumAlignment, isUnion: isUnion)
     }
 
     static func align(_ value: Int, to alignment: Int) -> Int {
