@@ -19,7 +19,9 @@ public enum MiniLangRegistry {
         MiniRust.self,
         MiniCpp.self,
         MiniJavaScript.self,
-        MiniTypeScript.self
+        MiniTypeScript.self,
+        MiniDart.self,
+        MiniGroovy.self
     ]
 
     public static func engine(for languageID: String) -> MiniLangEngine.Type? {

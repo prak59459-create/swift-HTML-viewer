@@ -709,8 +709,8 @@ open class MLProfileParser: MLParserBase {
         var body: [MLStmt] = []
         if check("{") {
             body = try parseBlock()
-        } else if match("=") {
-            // `def f(x) = expr` 形式。
+        } else if match("=", "=>") {
+            // `def f(x) = expr` / `int f() => expr` 形式。
             let value = try parseExpression()
             body = [.returnStmt(value, value.location)]
             consumeStatementEnd()
@@ -1146,7 +1146,7 @@ open class MLProfileParser: MLParserBase {
         var abstract = isAbstract
         if check("{") {
             body = try parseBlock()
-        } else if match("=") {
+        } else if match("=", "=>") {
             let value = try parseExpression()
             body = [.returnStmt(value, value.location)]
             consumeStatementEnd()
@@ -1222,6 +1222,10 @@ open class MLProfileParser: MLParserBase {
         }
         guard peek(offset).kind == .identifier else { return false }
         let next = peek(offset + 1).text
+        // 改行で文が終わる言語では `int x` だけでもフィールド宣言。
+        if profile.newlineTerminatesStatement, peek(offset + 1).precededByNewline {
+            return true
+        }
         // `int Value { get; set; }` のようなプロパティも宣言として扱う。
         return next == ";" || next == "=" || next == "," || next == "{"
             || peek(offset + 1).is("[")

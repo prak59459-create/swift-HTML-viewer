@@ -153,8 +153,12 @@ public final class MLInterpreter {
         return klass
     }
 
+    /// すでに中身を入れた型宣言 (同じ宣言を二度取り込まないため)。
+    private var filledDeclarations = Set<ObjectIdentifier>()
+
     private func fillClass(_ decl: MLTypeDecl, klass: MLClass,
                            in environment: MLEnvironment) throws {
+        guard filledDeclarations.insert(ObjectIdentifier(decl)).inserted else { return }
         if let superName = decl.superclassName {
             klass.superclass = classes[superName] ?? klass.superclass
         }
@@ -1295,6 +1299,15 @@ public final class MLInterpreter {
         }
         // 型そのものへのアクセス (静的メンバー / 列挙ケース)。
         if let klass = isClassToken(receiver) {
+            // 列挙の全ケース一覧 (`Color.values` / `Color.allCases`)。
+            if klass.kind == .enumType, name == "values" || name == "allCases" {
+                let cases = klass.caseOrder.map { caseName -> MLValue in
+                    if let box = klass.staticStorage.lookupLocal(caseName) { return box.value }
+                    return .object(MLObject(typeName: klass.name, classDeclaration: klass,
+                                            caseName: caseName))
+                }
+                return .array(MLArray(cases))
+            }
             if let box = klass.findStaticBox(name) { return box.value }
             if let found = klass.findStaticMethod(name) {
                 return .function(MLFunction(body: .declared(found.decls[0]),
