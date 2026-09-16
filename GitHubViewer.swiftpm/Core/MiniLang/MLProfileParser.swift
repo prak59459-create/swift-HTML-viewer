@@ -1538,6 +1538,10 @@ open class MLProfileParser: MLParserBase {
             }
             if check("["), !current.precededByNewline {
                 advance()
+                // `xs[1 .. $]` のように、添字の中から受け手を参照する言語のため。
+                let savedReceiver = subscriptReceiver
+                subscriptReceiver = expression
+                defer { subscriptReceiver = savedReceiver }
                 let index = check(":") ? MLExpr.literal(.int(0), location) : try parseExpression()
                 if match(":", "...", "..<", "..") {
                     let upper = check("]") ? nil : try parseExpression()
@@ -1585,6 +1589,9 @@ open class MLProfileParser: MLParserBase {
         }
         return expression
     }
+
+    /// 添字の中で「今どの値を引いているか」。`xs[$-1]` のような記法に使う。
+    public var subscriptReceiver: MLExpr?
 
     /// `a.b` のようにメンバーを取り出す記号。`->` を使う言語だけ足す。
     open var memberAccessOperators: [String] { [".", "?."] }

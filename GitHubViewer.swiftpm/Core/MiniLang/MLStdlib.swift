@@ -1022,7 +1022,8 @@ public enum MLStdlib {
             case "f", "F", "e", "E", "g", "G":
                 let number = nextArgument().asDouble ?? 0
                 result += String(format: spec + String(conversion), number)
-            case "s":
+            case "s", "@", "v":
+                // `%@` は Objective-C の「オブジェクトを表示する」指定。
                 var text = semantics.stringify(nextArgument())
                 if let precision, let limit = Int(precision) { text = String(text.prefix(limit)) }
                 if let columns = Int(width), text.count < columns {

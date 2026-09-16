@@ -66,11 +66,26 @@ public final class MLInterpreter {
         }
     }
 
+    /// 開始点に渡す引数。`main()` / `main(args)` / `main(argc, argv)` の
+    /// どの形でも動くように、受け取る個数に合わせて用意する。
+    private func entryArguments(count: Int) -> [MLValue] {
+        switch count {
+        case 0: return []
+        case 1: return [.array(MLArray([.string("program")]))]
+        default:
+            return [.int(1), .array(MLArray([.string("program")]))]
+                + Array(repeating: .unit, count: Swift.max(0, count - 2))
+        }
+    }
+
     private func callEntryPoint(name: String, typeName: String?) throws {
         if let typeName, let klass = classes[typeName] {
             if let found = klass.findStaticMethod(name) {
+                let arguments = entryArguments(count: found.decls[0].arity)
                 _ = try invoke(found.decls, receiver: nil, owner: found.owner,
-                               arguments: [.array(MLArray())], labels: [nil], boxes: [nil],
+                               arguments: arguments,
+                               labels: Array(repeating: nil, count: arguments.count),
+                               boxes: Array(repeating: nil, count: arguments.count),
                                closure: klass.declarationEnvironment ?? globals,
                                location: found.decls[0].location)
                 return
@@ -78,8 +93,11 @@ public final class MLInterpreter {
             if let found = klass.findMethod(name) {
                 let instance = try instantiate(klass, arguments: [], labels: [],
                                                location: found.decls[0].location)
+                let arguments = entryArguments(count: found.decls[0].arity)
                 _ = try invoke(found.decls, receiver: instance, owner: found.owner,
-                               arguments: [.array(MLArray())], labels: [nil], boxes: [nil],
+                               arguments: arguments,
+                               labels: Array(repeating: nil, count: arguments.count),
+                               boxes: Array(repeating: nil, count: arguments.count),
                                closure: klass.declarationEnvironment ?? globals,
                                location: found.decls[0].location)
                 return
@@ -87,14 +105,18 @@ public final class MLInterpreter {
         }
         // 型を指定されていなければ、全クラスと大域から探す。
         if let box = globals.lookup(name), let function = box.value.asFunction {
-            _ = try callFunction(function, arguments: [.array(MLArray())],
+            _ = try callFunction(function,
+                                 arguments: entryArguments(count: function.declaredArity),
                                  location: SourceLocation(line: 0, column: 0))
             return
         }
         for klass in classes.values {
             if let found = klass.findStaticMethod(name) {
+                let arguments = entryArguments(count: found.decls[0].arity)
                 _ = try invoke(found.decls, receiver: nil, owner: found.owner,
-                               arguments: [.array(MLArray())], labels: [nil], boxes: [nil],
+                               arguments: arguments,
+                               labels: Array(repeating: nil, count: arguments.count),
+                               boxes: Array(repeating: nil, count: arguments.count),
                                closure: klass.declarationEnvironment ?? globals,
                                location: found.decls[0].location)
                 return
@@ -1421,6 +1443,12 @@ public final class MLInterpreter {
 
     public func subscriptValue(_ receiver: MLValue, index: MLValue,
                                location: SourceLocation) throws -> MLValue {
+        // `xs[1..3]` のように範囲で引いたら切り出しになる。
+        if case .range(let range) = index.forced {
+            return try slice(receiver, from: .int(range.lower),
+                             to: .int(range.isClosed ? range.upper + 1 : range.upper),
+                             location: location)
+        }
         switch receiver.forced {
         case .array(let array):
             guard let raw = index.asInt else {
