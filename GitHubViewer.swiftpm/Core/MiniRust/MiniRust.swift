@@ -54,7 +54,6 @@ enum RustProfile {
         operators: MLLanguageProfile.cStyleOperators + ["=>", "::", "..=", "->"],
         newlineTerminatesStatement: false,
         usesSemicolons: true,
-        identifierExtras: ["!"],
         functionSyntax: .keyword,
         functionKeywords: ["fn"],
         variableKeywords: ["let": true],
@@ -160,6 +159,9 @@ final class RustParser: MLProfileParser {
                 statements.append(contentsOf: try parseImpl())
                 continue
             }
+            while profile.ignorableModifiers.contains(current.text), current.text != "#" {
+                advance()
+            }
             let before = index
             if let statement = try parseStatement() { statements.append(statement) }
             if index == before { advance() }
@@ -234,6 +236,9 @@ final class RustParser: MLProfileParser {
             return .noop(location)
         }
         if check("let") { return try parseLet() }
+        if check("struct") || check("enum") || check("trait") || check("union") {
+            return .typeDecl(try parseRustTypeDeclaration())
+        }
         if check("fn") { return .funcDecl(try parseRustFunction(ownerTypeName: nil)) }
         if check("loop") {
             advance()
@@ -272,6 +277,116 @@ final class RustParser: MLProfileParser {
     override func matchOptionalLabel() -> String? {
         guard current.text.hasPrefix("'"), current.text.count > 1 else { return nil }
         return String(advance().text.dropFirst())
+    }
+
+    /// `struct Point { x: i32 }` / `struct Wrapper(i32);` / `enum Shape { Circle(f64) }`
+    private func parseRustTypeDeclaration() throws -> MLTypeDecl {
+        let location = current.location
+        let keyword = advance().text
+        let name = try expectIdentifier("型名")
+        skipGenericParameters()
+        if check("where") { while !isAtEnd, !check("{"), !check(";") { advance() } }
+
+        if keyword == "enum" {
+            try expect("{", "enum の本体")
+            var cases: [MLCaseDecl] = []
+            while !isAtEnd, !check("}") {
+                skipStatementSeparators()
+                skipAttributes()
+                if check("}") { break }
+                let caseName = try expectIdentifier("列挙のケース")
+                var associatedTypes: [String] = []
+                var associatedNames: [String] = []
+                if check("(") {
+                    advance()
+                    while !isAtEnd, !check(")") {
+                        associatedTypes.append(try parseTypeName())
+                        if !match(",") { break }
+                    }
+                    try expect(")", "列挙のケース")
+                } else if check("{") {
+                    advance()
+                    while !isAtEnd, !check("}") {
+                        let field = try expectIdentifier("フィールド名")
+                        try expect(":", "フィールドの型")
+                        associatedTypes.append(try parseTypeName())
+                        associatedNames.append(field)
+                        if !match(",") { break }
+                    }
+                    try expect("}", "列挙のケース")
+                }
+                var rawValue: MLExpr?
+                if match("=") { rawValue = try parseExpression() }
+                cases.append(MLCaseDecl(name: caseName, associatedTypes: associatedTypes,
+                                        associatedNames: associatedNames, rawValue: rawValue))
+                if !match(",") { break }
+            }
+            skipStatementSeparators()
+            try expect("}", "enum の終わり")
+            return MLTypeDecl(kind: .enumType, name: name, cases: cases, location: location)
+        }
+
+        if keyword == "trait" {
+            var methods: [MLFunctionDecl] = []
+            try expect("{", "trait の本体")
+            while !isAtEnd, !check("}") {
+                skipStatementSeparators()
+                skipAttributes()
+                if check("}") { break }
+                while profile.ignorableModifiers.contains(current.text),
+                      current.text != "#" { advance() }
+                if check("type") {
+                    skipToStatementEnd()
+                    continue
+                }
+                guard check("fn") else {
+                    advance()
+                    continue
+                }
+                methods.append(try parseRustFunction(ownerTypeName: name))
+            }
+            try expect("}", "trait の終わり")
+            return MLTypeDecl(kind: .interfaceType, name: name, methods: methods,
+                              location: location)
+        }
+
+        // struct / union
+        var properties: [MLPropertyDecl] = []
+        if check("(") {
+            // タプル構造体。
+            advance()
+            var index = 0
+            while !isAtEnd, !check(")") {
+                while profile.ignorableModifiers.contains(current.text),
+                      current.text != "#" { advance() }
+                let fieldType = try parseTypeName()
+                properties.append(MLPropertyDecl(name: String(index), typeName: fieldType))
+                index += 1
+                if !match(",") { break }
+            }
+            try expect(")", "タプル構造体")
+            consumeStatementEnd()
+        } else if check("{") {
+            advance()
+            while !isAtEnd, !check("}") {
+                skipStatementSeparators()
+                skipAttributes()
+                if check("}") { break }
+                while profile.ignorableModifiers.contains(current.text),
+                      current.text != "#" { advance() }
+                let field = try expectIdentifier("フィールド名")
+                try expect(":", "フィールドの型")
+                let fieldType = try parseTypeName()
+                properties.append(MLPropertyDecl(name: field, typeName: fieldType))
+                if !match(",") { break }
+            }
+            skipStatementSeparators()
+            try expect("}", "struct の終わり")
+        } else {
+            consumeStatementEnd()
+        }
+        return MLTypeDecl(kind: .structType, name: name, properties: properties,
+                          location: location)
     }
 
     /// `let mut x: i32 = 5;` / `let (a, b) = t;` / `let Some(v) = opt else { }`
@@ -554,6 +669,20 @@ final class RustParser: MLProfileParser {
         try parseRustPattern()
     }
 
+    /// 借用 `&x` と参照外し `*x` は実行時の値を変えないので素通りさせる。
+    override func parseUnary(stopAtBrace: Bool) throws -> MLExpr {
+        if check("&") || check("&&") {
+            advance()
+            _ = match("mut")
+            return try parseUnary(stopAtBrace: stopAtBrace)
+        }
+        if check("*") {
+            let location = advance().location
+            return .dereference(try parseUnary(stopAtBrace: stopAtBrace), location)
+        }
+        return try super.parseUnary(stopAtBrace: stopAtBrace)
+    }
+
     /// `if`, `match`, ブロックはすべて式。
     override func parsePrimary(stopAtBrace: Bool) throws -> MLExpr {
         let location = current.location
@@ -679,6 +808,15 @@ final class RustParser: MLProfileParser {
         var expression = try super.parsePostfix(stopAtBrace: stopAtBrace)
         while true {
             let location = current.location
+            // マクロ呼び出し。
+            if check("!"), case .name(let macroName, let nameLocation) = expression,
+               peek(1).is("(") || peek(1).is("[") || peek(1).is("{") {
+                advance()
+                let arguments = try parseMacroArguments()
+                expression = .call(callee: .name(macroName + "!", nameLocation),
+                                   arguments: arguments, nameLocation)
+                continue
+            }
             if check("::") {
                 advance()
                 if check("<") {
@@ -729,37 +867,25 @@ final class RustParser: MLProfileParser {
                                                || peek(2).is("}"))
     }
 
-    /// `println!("{}", x)` のようなマクロ。
-    override func parseArgumentList() throws -> [MLArgument] {
-        if check("!") { advance() }
-        if check("[") {
-            // `vec![1, 2, 3]`
-            advance()
-            var arguments: [MLArgument] = []
-            while !isAtEnd, !check("]") {
-                let value = try parseExpression()
-                if match(";") {
-                    let count = try parseExpression()
-                    try expect("]", "vec! の終わり")
-                    return [MLArgument(value: value), MLArgument(value: count)]
-                }
-                arguments.append(MLArgument(value: value))
-                if !match(",") { break }
+    /// `println!("{}", x)` / `vec![1, 2, 3]` のようなマクロ呼び出し。
+    private func parseMacroArguments() throws -> [MLArgument] {
+        let open = current.text
+        let close = open == "(" ? ")" : (open == "[" ? "]" : "}")
+        try expect(open, "マクロの引数")
+        var arguments: [MLArgument] = []
+        while !isAtEnd, !check(close) {
+            let value = try parseExpression()
+            // `vec![0; 10]` は「値と個数」の形。
+            if match(";") {
+                let count = try parseExpression()
+                try expect(close, "マクロの終わり")
+                return [MLArgument(value: value), MLArgument(value: count)]
             }
-            try expect("]", "マクロの終わり")
-            return arguments
+            arguments.append(MLArgument(value: value))
+            if !match(",") { break }
         }
-        if check("{") {
-            advance()
-            var arguments: [MLArgument] = []
-            while !isAtEnd, !check("}") {
-                arguments.append(MLArgument(value: try parseExpression()))
-                if !match(",") { break }
-            }
-            try expect("}", "マクロの終わり")
-            return arguments
-        }
-        return try super.parseArgumentList()
+        try expect(close, "マクロの終わり")
+        return arguments
     }
 
     override func precedence(of op: String) -> Int? {
@@ -767,6 +893,8 @@ final class RustParser: MLProfileParser {
         if op == "as" { return 14 }
         return super.precedence(of: op)
     }
+
+    override var memberAccessOperators: [String] { [".", "?.", "::"] }
 
     override func makeLexer(for text: String) -> MLProfileLexer {
         RustLexer(source: text, diagnostics: diagnostics)

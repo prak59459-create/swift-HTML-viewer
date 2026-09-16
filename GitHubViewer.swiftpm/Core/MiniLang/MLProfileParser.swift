@@ -226,6 +226,35 @@ open class MLProfileParser: MLParserBase {
         return .ifStmt(condition: condition, then: then, otherwise: otherwise, location)
     }
 
+    /// `if` を式としても書ける言語か。
+    open var supportsIfExpression: Bool { false }
+
+    /// 式としての `if`。
+    open func parseIfExpression() throws -> MLExpr {
+        let location = current.location
+        try expect("if")
+        let condition = try parseCondition()
+        let then = try parseBranchExpression()
+        var otherwise: MLExpr?
+        let saved = index
+        skipStatementSeparators()
+        if check("else") {
+            advance()
+            otherwise = check("if") ? try parseIfExpression() : try parseBranchExpression()
+        } else {
+            index = saved
+        }
+        return .ifExpr(condition: condition, then: then, otherwise: otherwise, location)
+    }
+
+    /// `if` / `when` の分岐に書ける本体 (ブロックでも式でもよい)。
+    open func parseBranchExpression() throws -> MLExpr {
+        let location = current.location
+        _ = match("then")
+        if check("{") { return .block(try parseBlock(), location) }
+        return try parseExpression()
+    }
+
     /// `if` の条件。括弧を必須にする言語もあれば不要な言語もある。
     open func parseCondition() throws -> MLExpr {
         if check("(") {
@@ -335,30 +364,39 @@ open class MLProfileParser: MLParserBase {
     open func parseForInHeader(location: SourceLocation, label: String?,
                                hadParenthesis: Bool) throws -> MLStmt? {
         let saved = index
+        var pattern: MLPattern?
+        var sequence: MLExpr?
+        var whereClause: MLExpr?
+
+        // 見出しの部分だけを試しに読む。本体は「for-in だと確定してから」読む
+        // (本体の中の構文エラーで C 形式に取り違えないため)。
         diagnostics.beginSuppression()
-        defer { diagnostics.endSuppression() }
         do {
             _ = matchedVariableKeyword()
-            let pattern = try parseForPattern()
-            guard check("in") || check(":") || check("<-") else {
-                index = saved
-                return nil
-            }
+            let parsed = try parseForPattern()
+            guard check("in") || check(":") || check("<-") else { throw AbortCompilation() }
             advance()
-            let sequence = try parseExpression(stopAtBrace: true)
-            var whereClause: MLExpr?
+            sequence = try parseExpression(stopAtBrace: true)
             if match("where") || match("if") {
                 whereClause = try parseExpression(stopAtBrace: true)
             }
-            if hadParenthesis { _ = match(")") }
-            _ = match("do")
-            let body = try parseStatementAsBlock()
-            return .forIn(pattern: pattern, sequence: sequence, body: body,
-                          whereClause: whereClause, label: label, location)
+            pattern = parsed
         } catch {
+            index = saved
+            diagnostics.endSuppression()
+            return nil
+        }
+        diagnostics.endSuppression()
+
+        guard let pattern, let sequence else {
             index = saved
             return nil
         }
+        if hadParenthesis { _ = match(")") }
+        _ = match("do")
+        let body = try parseStatementAsBlock()
+        return .forIn(pattern: pattern, sequence: sequence, body: body,
+                      whereClause: whereClause, label: label, location)
     }
 
     /// `for` の左辺。既定は名前かタプル。
@@ -1031,13 +1069,22 @@ open class MLProfileParser: MLParserBase {
                 let name = try expectIdentifier("フィールド名")
                 var arrayDepth = 0
                 while check("["), peek(1).is("]") { advance(); advance(); arrayDepth += 1 }
+                var getter: [MLStmt]?
+                var setter: [MLStmt]?
+                var setterParameter: String?
+                // `int Value { get; set; }` のようなプロパティ。
+                if check("{") {
+                    (getter, setter, setterParameter) = try parseAccessors()
+                }
                 var defaultValue: MLExpr?
                 if match("=") { defaultValue = try parseExpression() }
                 var fullType = fieldType
                 for _ in 0..<arrayDepth { fullType = "Array<\(fullType)>" }
                 body.properties.append(MLPropertyDecl(name: name, typeName: fullType,
                                                       defaultValue: defaultValue,
-                                                      isConstant: false, isStatic: isStatic))
+                                                      isConstant: false, isStatic: isStatic,
+                                                      getter: getter, setter: setter,
+                                                      setterParameter: setterParameter))
             } while match(",")
             consumeStatementEnd()
             return
@@ -1155,7 +1202,9 @@ open class MLProfileParser: MLParserBase {
         }
         guard peek(offset).kind == .identifier else { return false }
         let next = peek(offset + 1).text
-        return next == ";" || next == "=" || next == "," || peek(offset + 1).is("[")
+        // `int Value { get; set; }` のようなプロパティも宣言として扱う。
+        return next == ";" || next == "=" || next == "," || next == "{"
+            || peek(offset + 1).is("[")
     }
 
     open func skipBalanced(open: String, close: String) {
@@ -1226,7 +1275,12 @@ open class MLProfileParser: MLParserBase {
             return try parseConstructorPattern(name: advance().text)
         }
         if current.kind == .identifier {
-            let name = advance().text
+            var name = advance().text
+            // `Color.Red` / `Shape::Circle` のように修飾された列挙のケース。
+            while (check(".") || check("::")), peek(1).kind == .identifier {
+                advance()
+                name = advance().text
+            }
             if check("(") { return try parseConstructorPattern(name: name) }
             if check("{") , peek(1).kind == .identifier, peek(2).is(":") {
                 return try parseConstructorPattern(name: name)
@@ -1439,7 +1493,7 @@ open class MLProfileParser: MLParserBase {
         var expression = try parsePrimary(stopAtBrace: stopAtBrace)
         while true {
             let location = current.location
-            if check(".") || check("?.") || check("->") || check("::") {
+            if memberAccessOperators.contains(where: { check($0) }) {
                 let isOptional = current.text == "?."
                 advance()
                 // `list.0` のようなタプル添字。
@@ -1507,6 +1561,9 @@ open class MLProfileParser: MLParserBase {
         }
         return expression
     }
+
+    /// `a.b` のようにメンバーを取り出す記号。`->` を使う言語だけ足す。
+    open var memberAccessOperators: [String] { [".", "?."] }
 
     /// `!` を強制アンラップとして読むか (既定では読まない)。
     open func isForceUnwrapContext() -> Bool { false }
@@ -1612,6 +1669,9 @@ open class MLProfileParser: MLParserBase {
             advance()
             return .superRef(location)
         }
+
+        // 式としての `if` (Kotlin / Scala / Rust など)。
+        if supportsIfExpression, check("if") { return try parseIfExpression() }
 
         // ラムダ。
         if let lambda = try parseLambdaIfPresent(stopAtBrace: stopAtBrace) { return lambda }

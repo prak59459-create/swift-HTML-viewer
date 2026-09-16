@@ -476,16 +476,18 @@ enum RustLibrary {
             switch name {
             case "or_insert":
                 if map[key] == nil { map[key] = context.argument(0) }
-                return map[key] ?? .unit
+                // `*map.entry(k).or_insert(0) += 1` と書けるよう、
+                // 値ではなく「書き込める場所」を返す。
+                return interpreter.makeReference(to: interpreter.box(forKey: key, in: map))
             case "or_insert_with":
                 if map[key] == nil {
                     let producer = try context.requireFunction(0, "or_insert_with")
                     map[key] = try interpreter.callFunction(producer, arguments: [])
                 }
-                return map[key] ?? .unit
+                return interpreter.makeReference(to: interpreter.box(forKey: key, in: map))
             case "or_default":
                 if map[key] == nil { map[key] = .int(0) }
-                return map[key] ?? .unit
+                return interpreter.makeReference(to: interpreter.box(forKey: key, in: map))
             case "and_modify":
                 if map[key] != nil {
                     let update = try context.requireFunction(0, "and_modify")

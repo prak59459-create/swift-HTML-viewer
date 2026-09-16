@@ -378,7 +378,8 @@ open class MLLexerBase {
     public func readInterpolatedString(terminator: Character,
                                        interpolationPrefix: String,
                                        simpleVariablePrefix: Character? = nil,
-                                       allowsEscapes: Bool = true) -> [MLStringPiece] {
+                                       allowsEscapes: Bool = true,
+                                       keepsVariablePrefix: Bool = false) -> [MLStringPiece] {
         var pieces: [MLStringPiece] = []
         var literal = ""
         var literalStart = location
@@ -447,8 +448,9 @@ open class MLLexerBase {
                     }
                     break
                 }
-                pieces.append(MLStringPiece(text: String(prefix) + name, isExpression: true,
-                                            location: start))
+                pieces.append(MLStringPiece(text: keepsVariablePrefix
+                                            ? String(prefix) + name : name,
+                                            isExpression: true, location: start))
                 continue
             }
             literal.append(character)

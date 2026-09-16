@@ -23,6 +23,9 @@ public struct MLLanguageProfile {
         public var interpolationPrefix: String?
         /// `$name` のように括弧なしで書ける変数の印。
         public var simpleVariablePrefix: Character?
+        /// `$name` の `$` を式の一部として残すか (Perl / PHP のように
+        /// 記号まで含めて変数名になる言語で true)。
+        public var keepsVariablePrefix: Bool
         /// この引用符は 1 文字の文字リテラルを作る。
         public var producesCharacter: Bool
         /// 三重引用符のような複数行リテラル。
@@ -30,12 +33,14 @@ public struct MLLanguageProfile {
 
         public init(quote: Character, terminator: Character? = nil, allowsEscapes: Bool = true,
                     interpolationPrefix: String? = nil, simpleVariablePrefix: Character? = nil,
+                    keepsVariablePrefix: Bool = false,
                     producesCharacter: Bool = false, isMultiline: Bool = false) {
             self.quote = quote
             self.terminator = terminator ?? quote
             self.allowsEscapes = allowsEscapes
             self.interpolationPrefix = interpolationPrefix
             self.simpleVariablePrefix = simpleVariablePrefix
+            self.keepsVariablePrefix = keepsVariablePrefix
             self.producesCharacter = producesCharacter
             self.isMultiline = isMultiline
         }
@@ -283,7 +288,8 @@ open class MLProfileLexer: MLLexerBase {
                 terminator: style.terminator,
                 interpolationPrefix: style.interpolationPrefix ?? "",
                 simpleVariablePrefix: style.simpleVariablePrefix,
-                allowsEscapes: style.allowsEscapes)
+                allowsEscapes: style.allowsEscapes,
+                keepsVariablePrefix: style.keepsVariablePrefix)
             _ = prefix
             // 補間が無ければただの文字列として返す。
             if pieces.allSatisfy({ !$0.isExpression }) {

@@ -128,6 +128,19 @@ final class GoParser: MLProfileParser {
             return .noop(location)
         }
         if check("for") { return try parseGoFor(label: nil) }
+        if check("return") {
+            advance()
+            if isStatementBoundary() {
+                consumeStatementEnd()
+                return .returnStmt(nil, location)
+            }
+            // Go は複数の値を返せるので、2 つ以上ならタプルにする。
+            var values: [MLExpr] = [try parseExpression()]
+            while match(",") { values.append(try parseExpression()) }
+            consumeStatementEnd()
+            return .returnStmt(values.count == 1 ? values[0]
+                                                 : .tupleLiteral(values, location), location)
+        }
         return try super.parseStatement()
     }
 

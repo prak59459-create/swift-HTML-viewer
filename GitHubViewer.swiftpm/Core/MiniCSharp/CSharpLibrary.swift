@@ -68,18 +68,44 @@ enum CSharpLibrary {
             return .array(MLArray(Array(repeating: element, count: Swift.max(0, count))))
         }), isConstant: true)
 
-        for name in ["Exception", "ArgumentException", "InvalidOperationException",
-                     "DivideByZeroException", "NullReferenceException",
-                     "IndexOutOfRangeException", "FormatException",
-                     "ArgumentNullException", "NotSupportedException",
-                     "KeyNotFoundException", "OverflowException"] {
+        for name in exceptionAncestors.keys {
             environment.define(name, .function(.native(name, 0...2) { context in
-                let object = MLObject(typeName: name)
-                object.fields[.string("Message")] =
-                    .string(context.optionalArgument(0)?.asString ?? "")
-                return .object(object)
+                .object(exception(name, context.optionalArgument(0)?.asString ?? ""))
             }), isConstant: true)
         }
+    }
+
+    /// C# の例外の継承関係 (`catch (Exception e)` で拾えるようにするため)。
+    static let exceptionAncestors: [String: [String]] = [
+        "Exception": ["Exception"],
+        "SystemException": ["SystemException", "Exception"],
+        "ArgumentException": ["ArgumentException", "SystemException", "Exception"],
+        "ArgumentNullException": ["ArgumentNullException", "ArgumentException",
+                                  "SystemException", "Exception"],
+        "ArgumentOutOfRangeException": ["ArgumentOutOfRangeException", "ArgumentException",
+                                        "SystemException", "Exception"],
+        "InvalidOperationException": ["InvalidOperationException", "SystemException",
+                                      "Exception"],
+        "ArithmeticException": ["ArithmeticException", "SystemException", "Exception"],
+        "DivideByZeroException": ["DivideByZeroException", "ArithmeticException",
+                                  "SystemException", "Exception"],
+        "OverflowException": ["OverflowException", "ArithmeticException",
+                              "SystemException", "Exception"],
+        "NullReferenceException": ["NullReferenceException", "SystemException", "Exception"],
+        "IndexOutOfRangeException": ["IndexOutOfRangeException", "SystemException",
+                                     "Exception"],
+        "FormatException": ["FormatException", "SystemException", "Exception"],
+        "NotSupportedException": ["NotSupportedException", "SystemException", "Exception"],
+        "NotImplementedException": ["NotImplementedException", "SystemException", "Exception"],
+        "KeyNotFoundException": ["KeyNotFoundException", "SystemException", "Exception"]
+    ]
+
+    static func exception(_ typeName: String, _ message: String) -> MLObject {
+        let object = MLObject(typeName: typeName)
+        object.fields[.string("Message")] = .string(message)
+        let ancestors = exceptionAncestors[typeName] ?? [typeName, "Exception"]
+        object.fields[.string("#types")] = .array(MLArray(ancestors.map { .string($0) }))
+        return object
     }
 
     static func makeConsole(semantics: CSharpSemantics) -> MLObject {

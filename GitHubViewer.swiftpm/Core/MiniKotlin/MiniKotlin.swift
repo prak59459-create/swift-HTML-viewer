@@ -67,7 +67,7 @@ enum KotlinProfile {
                              "final", "abstract", "sealed", "data", "inline", "infix",
                              "operator", "override", "lateinit", "const", "suspend",
                              "tailrec", "vararg", "companion", "inner", "external",
-                             "annotation", "expect", "actual", "@"],
+                             "annotation", "expect", "actual", "enum", "@"],
         lambdaArrows: ["->"],
         nullLiterals: ["null"],
         selfKeywords: ["this"])
@@ -101,6 +101,23 @@ final class KotlinParser: MLProfileParser {
     }
 
     override func entryPointName() -> String? { "main" }
+
+    override var enumCasesNeedKeyword: Bool { false }
+
+    override var supportsIfExpression: Bool { true }
+
+    /// `enum class Color { RED, GREEN }` を列挙として読む。
+    override func matchedTypeKeyword() -> MLTypeDecl.Kind? {
+        var offset = 0
+        var sawEnum = false
+        while profile.ignorableModifiers.contains(peek(offset).text) {
+            if peek(offset).text == "enum" { sawEnum = true }
+            offset += 1
+        }
+        guard let kind = profile.typeKeywords[peek(offset).text],
+              peek(offset + 1).kind == .identifier else { return nil }
+        return sawEnum ? .enumType : kind
+    }
 
     override func parseProgram() throws -> MLProgram {
         var statements: [MLStmt] = []
@@ -207,8 +224,28 @@ final class KotlinParser: MLProfileParser {
         try parseTrailingClosure()
     }
 
-    /// `when` は値も返す。
+    override func parsePrimary(stopAtBrace: Bool) throws -> MLExpr {
+        if check("when") { return try parseWhenExpression() }
+        if check("try") {
+            // `try { ... } catch (e: E) { ... }` も式として値を返す。
+            let location = current.location
+            let statement = try parseTry()
+            return .block([statement], location)
+        }
+        return try super.parsePrimary(stopAtBrace: stopAtBrace)
+    }
+
+    /// `when` は文としても式としても書ける。
     override func parseSwitch(label: String?) throws -> MLStmt {
+        let location = current.location
+        let expression = try parseWhenExpression()
+        guard case .match(let subject, let arms, _) = expression else {
+            return .expression(expression, location)
+        }
+        return .matchStmt(subject: subject, arms: arms, label: label, location)
+    }
+
+    func parseWhenExpression() throws -> MLExpr {
         let location = current.location
         try expect("when")
         var subject: MLExpr?
@@ -217,8 +254,7 @@ final class KotlinParser: MLProfileParser {
             try expect(")", "when の対象")
         }
         let arms = try parseWhenBody(hasSubject: subject != nil)
-        return .matchStmt(subject: subject ?? .literal(.bool(true), location),
-                          arms: arms, label: label, location)
+        return .match(subject: subject ?? .literal(.bool(true), location), arms: arms, location)
     }
 
     private func parseWhenBody(hasSubject: Bool) throws -> [MLMatchArm] {
@@ -349,6 +385,8 @@ final class KotlinParser: MLProfileParser {
         return MLParameter(label: name, name: name, typeName: typeName,
                            defaultValue: defaultValue, isVariadic: isVariadic)
     }
+
+    override var memberAccessOperators: [String] { [".", "?.", "::"] }
 
     override func makeLexer(for text: String) -> MLProfileLexer {
         KotlinLexer(source: text, diagnostics: diagnostics)

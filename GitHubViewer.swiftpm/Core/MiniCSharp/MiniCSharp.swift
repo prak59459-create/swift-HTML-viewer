@@ -365,6 +365,8 @@ final class CSharpParser: MLProfileParser {
         return try super.parseAccessors()
     }
 
+    override var memberAccessOperators: [String] { [".", "?.", "::"] }
+
     override func makeLexer(for text: String) -> MLProfileLexer {
         CSharpLexer(source: text, diagnostics: diagnostics)
     }
@@ -474,6 +476,23 @@ final class CSharpSemantics: MLSemantics {
                                                semantics: self)
         }
         return nil
+    }
+
+    /// C# の 0 除算は `DivideByZeroException`。
+    override func divideIntegers(_ lhs: Int64, _ rhs: Int64) throws -> MLValue {
+        guard rhs != 0 else {
+            throw MLError.thrown(.object(CSharpLibrary.exception(
+                "DivideByZeroException", "Attempted to divide by zero.")))
+        }
+        return .int(lhs / rhs)
+    }
+
+    override func moduloIntegers(_ lhs: Int64, _ rhs: Int64) throws -> MLValue {
+        guard rhs != 0 else {
+            throw MLError.thrown(.object(CSharpLibrary.exception(
+                "DivideByZeroException", "Attempted to divide by zero.")))
+        }
+        return .int(lhs % rhs)
     }
 
     override func installBuiltins(into environment: MLEnvironment, interpreter: MLInterpreter) {

@@ -464,6 +464,8 @@ final class CppParser: MLProfileParser {
         return try super.parsePrimary(stopAtBrace: stopAtBrace)
     }
 
+    override var memberAccessOperators: [String] { [".", "?.", "->", "::"] }
+
     override func makeLexer(for text: String) -> MLProfileLexer {
         CppLexer(source: text, diagnostics: diagnostics)
     }

@@ -141,9 +141,11 @@ public final class MLInterpreter {
     }
 
     private func registerClassShell(_ decl: MLTypeDecl, in environment: MLEnvironment) -> MLClass {
-        let klass = MLClass(name: decl.name, kind: decl.kind)
+        // 同じ型が複数の宣言に分かれることがある (Rust の struct と impl、
+        // C# の partial class など)。その場合は 1 つにまとめる。
+        let klass = classes[decl.name] ?? MLClass(name: decl.name, kind: decl.kind)
         klass.declarationEnvironment = environment
-        klass.isAbstract = decl.isAbstract
+        klass.isAbstract = klass.isAbstract || decl.isAbstract
         classes[decl.name] = klass
         for nested in decl.nestedTypes {
             _ = registerClassShell(nested, in: environment)
@@ -154,10 +156,10 @@ public final class MLInterpreter {
     private func fillClass(_ decl: MLTypeDecl, klass: MLClass,
                            in environment: MLEnvironment) throws {
         if let superName = decl.superclassName {
-            klass.superclass = classes[superName]
+            klass.superclass = classes[superName] ?? klass.superclass
         }
-        klass.interfaceNames = decl.interfaceNames
-        klass.interfaces = decl.interfaceNames.compactMap {
+        klass.interfaceNames += decl.interfaceNames
+        klass.interfaces += decl.interfaceNames.compactMap {
             classes[$0] ?? classes[MLInterpreter.baseTypeName($0)]
         }
         // 親クラスがインタフェースとして宣言されていた場合も取り込む。
@@ -168,10 +170,13 @@ public final class MLInterpreter {
             klass.interfaces.append(parent)
             klass.interfaceNames.append(parent.name)
         }
-        klass.properties = decl.properties
-        klass.primaryParameters = decl.primaryParameters
-        klass.bodyStatements = decl.bodyStatements
-        klass.initializers = decl.initializers
+        for property in decl.properties
+        where !klass.properties.contains(where: { $0.name == property.name }) {
+            klass.properties.append(property)
+        }
+        if klass.primaryParameters.isEmpty { klass.primaryParameters = decl.primaryParameters }
+        klass.bodyStatements += decl.bodyStatements
+        klass.initializers += decl.initializers
         for method in decl.methods {
             if method.isStatic {
                 klass.staticMethods[method.name, default: []].append(method)
@@ -289,9 +294,30 @@ public final class MLInterpreter {
                                 in environment: MLEnvironment) throws -> MLValue {
         var last = MLValue.unit
         for (index, statement) in statements.enumerated() {
-            if index == statements.count - 1, case .expression(let expression, _) = statement {
+            guard index == statements.count - 1 else {
+                try execute(statement, in: environment)
+                continue
+            }
+            // 最後の文が値を持つ形なら、その値をブロックの値にする
+            // (Rust / Scala / Kotlin のような式指向の言語のため)。
+            switch statement {
+            case .expression(let expression, _):
                 last = try evaluate(expression, in: environment)
-            } else {
+            case .ifStmt(let condition, let then, let otherwise, let location):
+                if try semantics.isTruthy(evaluate(condition, in: environment)) {
+                    last = try executeForValue(then, in: MLEnvironment(parent: environment))
+                } else if let otherwise {
+                    last = try executeForValue(otherwise, in: MLEnvironment(parent: environment))
+                } else {
+                    last = .unit
+                }
+                _ = location
+            case .matchStmt(let subject, let arms, _, let location):
+                last = try evaluateMatch(subject: subject, arms: arms, in: environment,
+                                         label: nil, location: location, asStatement: false)
+            case .block(let inner, _):
+                last = try executeForValue(inner, in: MLEnvironment(parent: environment))
+            default:
                 try execute(statement, in: environment)
                 last = .unit
             }
@@ -914,10 +940,9 @@ public final class MLInterpreter {
                let box = referenceBoxes[ObjectIdentifier(object)] {
                 return box.value
             }
-            if value.asArray != nil || value.asMap != nil || value.asObject != nil {
-                return value
-            }
-            throw MLError.runtime("\(location) 参照ではない値をたどろうとしました")
+            // 参照でなければそのままの値 (Rust の `*x` は値そのものになる)。
+            _ = location
+            return value
         }
     }
 
@@ -927,6 +952,24 @@ public final class MLInterpreter {
     public func referencedBox(_ value: MLValue) -> MLBox? {
         guard let object = value.asObject, object.typeName == "#ref" else { return nil }
         return referenceBoxes[ObjectIdentifier(object)]
+    }
+
+    /// 箱を指す参照値を作る (組み込みが「書き込める場所」を返したいときに使う)。
+    public func makeReference(to box: MLBox) -> MLValue {
+        let object = MLObject(typeName: "#ref")
+        object.payload = [box.value]
+        referenceBoxes[ObjectIdentifier(object)] = box
+        return .object(object)
+    }
+
+    /// 辞書の 1 要素を指す箱。
+    public func box(forKey key: MLKey, in map: MLMap) -> MLBox {
+        MLMapBox(map: map, key: key)
+    }
+
+    /// 配列の 1 要素を指す箱。
+    public func box(atIndex index: Int, in array: MLArray) -> MLBox {
+        MLElementBox(array: array, index: index)
     }
 
     // MARK: 名前の解決

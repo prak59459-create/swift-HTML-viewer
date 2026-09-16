@@ -278,6 +278,8 @@ final class JavaParser: MLProfileParser {
         return try super.parseForPattern()
     }
 
+    override var memberAccessOperators: [String] { [".", "?.", "::"] }
+
     override func makeLexer(for text: String) -> MLProfileLexer {
         JavaLexer(source: text, diagnostics: diagnostics)
     }
