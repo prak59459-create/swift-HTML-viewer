@@ -172,12 +172,27 @@ open class MLProfileParser: MLParserBase {
         return false
     }
 
+    /// 実行に関係のない宣言などを、文の終わりまで読み飛ばす。
+    /// 括弧の中の改行では止まらないようにしてある。
     open func skipToStatementEnd() {
-        while !isAtEnd, !check(";") {
-            if profile.newlineTerminatesStatement, current.precededByNewline { return }
+        var depth = 0
+        var isFirst = true
+        while !isAtEnd {
+            if depth == 0, check(";") {
+                advance()
+                return
+            }
+            if !isFirst, depth == 0, profile.newlineTerminatesStatement,
+               current.precededByNewline { return }
+            let text = current.text
+            if text == "(" || text == "[" || text == "{" { depth += 1 }
+            if text == ")" || text == "]" || text == "}" {
+                if depth == 0 { return }
+                depth -= 1
+            }
             advance()
+            isFirst = false
         }
-        if check(";") { advance() }
     }
 
     open func parseBlock() throws -> [MLStmt] {
@@ -501,6 +516,9 @@ open class MLProfileParser: MLParserBase {
                           fallsThrough: fallsThrough, isDefault: isDefault)
     }
 
+    /// `catch (x)` の中身が型ではなく変数名だけか (JavaScript / Python など)。
+    open var catchBindsNameOnly: Bool { false }
+
     open func parseTry() throws -> MLStmt {
         let location = current.location
         try expect("try")
@@ -515,8 +533,10 @@ open class MLProfileParser: MLParserBase {
                 var typeName: String?
                 var binding: String?
                 if match("(") {
-                    // `catch (IOException e)`
-                    if current.kind == .identifier || current.kind == .keyword {
+                    // `catch (IOException e)` / `catch (e)`
+                    if catchBindsNameOnly {
+                        if current.kind == .identifier { binding = advance().text }
+                    } else if current.kind == .identifier || current.kind == .keyword {
                         typeName = try parseTypeName()
                         if current.kind == .identifier { binding = advance().text }
                     }

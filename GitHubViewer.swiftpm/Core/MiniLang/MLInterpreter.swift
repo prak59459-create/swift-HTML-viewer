@@ -1685,6 +1685,32 @@ public final class MLInterpreter {
     private func evaluateCall(callee: MLExpr, arguments: [MLArgument],
                               in environment: MLEnvironment,
                               location: SourceLocation) throws -> MLValue {
+        // `super.method(...)` は親クラスの実装を直接呼ぶ (動的に選び直すと無限再帰になる)。
+        if case .member(.superRef, let name, _, _) = callee {
+            guard let selfBox = environment.lookup("self") ?? environment.lookup("this") else {
+                throw MLError.runtime("\(location) super を使える場所ではありません")
+            }
+            guard let superBox = environment.lookup("#super"),
+                  let superclass = isClassToken(superBox.value) else {
+                throw MLError.runtime("\(location) 親クラスがありません")
+            }
+            let resolved = try resolveArguments(arguments, in: environment)
+            if name == "init" || name == "constructor" {
+                try runInitializer(of: superclass, on: selfBox.value,
+                                   arguments: resolved.values, labels: resolved.labels,
+                                   location: location)
+                return selfBox.value
+            }
+            guard let found = superclass.findMethod(name)
+                    ?? superclass.findStaticMethod(name) else {
+                throw MLError.runtime("\(location) \(superclass.name) に \(name) はありません")
+            }
+            return try invoke(found.decls, receiver: selfBox.value, owner: found.owner,
+                              arguments: resolved.values, labels: resolved.labels,
+                              boxes: Array(repeating: nil, count: resolved.values.count),
+                              closure: superclass.declarationEnvironment ?? globals,
+                              location: location)
+        }
         // `obj.method(...)` はメソッド呼び出しとして扱う。
         if case .member(let receiverExpr, let name, let isOptional, _) = callee {
             let receiver = try evaluate(receiverExpr, in: environment)
@@ -1718,7 +1744,7 @@ public final class MLInterpreter {
         let resolved = try resolveArguments(arguments, in: environment,
                                             boxesFor: arguments.map { $0.value },
                                             environment: environment)
-        guard let function = calleeValue.asFunction else {
+        guard let function = calleeValue.asFunction ?? callableBody(of: calleeValue) else {
             throw MLError.runtime("\(location) \(semantics.typeName(of: calleeValue)) は呼び出せません")
         }
         return try callFunction(function, arguments: resolved.values, labels: resolved.labels,
@@ -1766,10 +1792,17 @@ public final class MLInterpreter {
                                    labels: Array(repeating: nil, count: arguments.count),
                                    location: location)
         }
-        guard let function = callee.asFunction else {
+        guard let function = callee.asFunction ?? callableBody(of: callee) else {
             throw MLError.runtime("\(location) \(semantics.typeName(of: callee)) は呼び出せません")
         }
         return try callFunction(function, arguments: arguments, location: location)
+    }
+
+    /// `String(x)` のように「呼び出せる名前空間」を作れるようにする。
+    /// フィールド `#call` に関数を入れておくと、その値を呼べる。
+    public func callableBody(of value: MLValue) -> MLFunction? {
+        guard let object = value.asObject else { return nil }
+        return object.fields[.string("#call")]?.asFunction
     }
 
     public func callFunction(_ function: MLFunction, arguments rawArguments: [MLValue],
@@ -2102,7 +2135,7 @@ public final class MLInterpreter {
         }
     }
 
-    private func runInitializer(of klass: MLClass, on receiver: MLValue,
+    func runInitializer(of klass: MLClass, on receiver: MLValue,
                                 arguments: [MLValue], labels: [String?],
                                 location: SourceLocation) throws {
         // 主コンストラクタ引数 (Kotlin / Scala 形式)。
