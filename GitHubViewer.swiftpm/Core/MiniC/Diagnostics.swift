@@ -70,36 +70,38 @@ public struct CompileFailure: Error, CustomStringConvertible {
 }
 
 /// 診断を貯めて、エラーがあれば投げるための入れ物。
-final class DiagnosticBag {
-    private(set) var diagnostics: [Diagnostic] = []
-    let source: String
+public final class DiagnosticBag {
+    public private(set) var diagnostics: [Diagnostic] = []
+    public let source: String
     /// 型を調べるためだけに式を解析するときなど、記録を止めたい区間の深さ。
     private var suppressionDepth = 0
 
-    init(source: String) {
+    public init(source: String) {
         self.source = source
     }
 
-    var hasErrors: Bool { diagnostics.contains { $0.severity == .error } }
+    public var hasErrors: Bool { diagnostics.contains { $0.severity == .error } }
 
-    func beginSuppression() { suppressionDepth += 1 }
+    public func beginSuppression() { suppressionDepth += 1 }
 
-    func endSuppression() { suppressionDepth = max(0, suppressionDepth - 1) }
+    public func endSuppression() { suppressionDepth = max(0, suppressionDepth - 1) }
 
-    func error(_ message: String, at location: SourceLocation) {
+    public func error(_ message: String, at location: SourceLocation) {
         guard suppressionDepth == 0 else { return }
         diagnostics.append(Diagnostic(severity: .error, message: message, location: location))
     }
 
-    func warning(_ message: String, at location: SourceLocation) {
+    public func warning(_ message: String, at location: SourceLocation) {
         guard suppressionDepth == 0 else { return }
         diagnostics.append(Diagnostic(severity: .warning, message: message, location: location))
     }
 
-    func failureIfNeeded() -> CompileFailure? {
+    public func failureIfNeeded() -> CompileFailure? {
         hasErrors ? CompileFailure(diagnostics: diagnostics, source: source) : nil
     }
 }
 
 /// 解析を打ち切るための内部エラー (メッセージは DiagnosticBag に入っている)。
-struct AbortCompilation: Error {}
+public struct AbortCompilation: Error {
+    public init() {}
+}

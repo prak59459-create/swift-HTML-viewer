@@ -16,6 +16,9 @@ let package = Package(
     ],
     targets: [
         .target(name: "GitHubViewerCore", path: "GitHubViewer.swiftpm/Core"),
+        // 内蔵処理系を端末から動かすための開発ツール (アプリには含まれない)。
+        .executableTarget(name: "minilang", dependencies: ["GitHubViewerCore"],
+                          path: "Tools/minilang"),
         .testTarget(name: "GitHubViewerCoreTests",
                     dependencies: ["GitHubViewerCore"],
                     path: "Tests/GitHubViewerCoreTests"),
