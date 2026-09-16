@@ -1018,6 +1018,15 @@ public final class MLInterpreter {
             if let field = object.fields[.string(name)] { return field }
             if let klass = object.classDeclaration {
                 if let found = klass.findMethod(name) {
+                    // Ruby 系は `speak` と書くだけで自分のメソッドを呼ぶ。
+                    if semantics.autoCallsZeroArgumentMembers,
+                       found.decls[0].clauses.allSatisfy({ $0.parameters.isEmpty }) {
+                        return try invoke(found.decls, receiver: selfBox.value,
+                                          owner: found.owner, arguments: [], labels: [],
+                                          boxes: [],
+                                          closure: klass.declarationEnvironment ?? globals,
+                                          location: location)
+                    }
                     return .function(MLFunction(body: .declared(found.decls[0]),
                                                 closure: klass.declarationEnvironment ?? globals,
                                                 boundSelf: selfBox.value, owner: found.owner))
@@ -1379,6 +1388,14 @@ public final class MLInterpreter {
                     return .unit
                 }
                 if let found = klass.findMethod(name) {
+                    // Ruby 系は `obj.method` と書くだけで呼び出しになる。
+                    if semantics.autoCallsZeroArgumentMembers,
+                       found.decls[0].clauses.allSatisfy({ $0.parameters.isEmpty }) {
+                        return try invoke(found.decls, receiver: receiver, owner: found.owner,
+                                          arguments: [], labels: [], boxes: [],
+                                          closure: klass.declarationEnvironment ?? globals,
+                                          location: location)
+                    }
                     return .function(MLFunction(body: .declared(found.decls[0]),
                                                 closure: klass.declarationEnvironment ?? globals,
                                                 boundSelf: receiver, owner: found.owner))
@@ -1406,6 +1423,11 @@ public final class MLInterpreter {
         // 組み込み型のプロパティ (length など) は共通ライブラリに任せる。
         if let value = try MLStdlib.member(of: receiver, name: name, interpreter: self) {
             return value
+        }
+        // Ruby 系は `xs.sort` のように括弧なしでメソッドを呼べる。
+        if semantics.autoCallsZeroArgumentMembers {
+            return try callMethod(on: receiver, name: name, arguments: [],
+                                  location: location)
         }
         throw MLError.runtime("\(location) \(semantics.typeName(of: receiver)) に \(name) はありません")
     }
