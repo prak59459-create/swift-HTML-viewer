@@ -637,6 +637,15 @@ public final class MLInterpreter {
 
         case .expression(let expression):
             let expected = try evaluate(expression, in: environment)
+            // `case 1...9` のように範囲を書いたら「その中に入るか」を見る。
+            if case .range(let range) = expected.forced, let number = value.asInt {
+                return range.isClosed ? (number >= range.lower && number <= range.upper)
+                                      : (number >= range.lower && number < range.upper)
+            }
+            // 配列を書いたら「そのどれかに当てはまるか」。
+            if let array = expected.asArray, value.asArray == nil {
+                return array.elements.contains { semantics.areEqual($0, value) }
+            }
             // 定数名として書かれた列挙ケースも拾う。
             return semantics.areEqual(expected, value)
 

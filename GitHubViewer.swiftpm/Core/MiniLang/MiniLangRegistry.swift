@@ -23,7 +23,8 @@ public enum MiniLangRegistry {
         MiniDart.self,
         MiniGroovy.self,
         MiniD.self,
-        MiniObjectiveC.self
+        MiniObjectiveC.self,
+        MiniZig.self
     ]
 
     public static func engine(for languageID: String) -> MiniLangEngine.Type? {

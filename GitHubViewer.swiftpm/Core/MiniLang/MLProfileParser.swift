@@ -1458,7 +1458,8 @@ open class MLProfileParser: MLParserBase {
                 let op = advance().text
                 let operand = try parseUnary(stopAtBrace: stopAtBrace)
                 return .unary(op: op, operand: operand, isPostfix: false, location)
-            case "++", "--":
+            case "++", "--" where hasIncrementOperators:
+                guard hasIncrementOperators else { break }
                 let op = advance().text
                 let operand = try parseUnary(stopAtBrace: stopAtBrace)
                 return .unary(op: op, operand: operand, isPostfix: false, location)
@@ -1558,7 +1559,7 @@ open class MLProfileParser: MLParserBase {
                 expression = .forceUnwrap(expression, location)
                 continue
             }
-            if check("++") || check("--") {
+            if hasIncrementOperators, check("++") || check("--") {
                 let op = advance().text
                 expression = .unary(op: op, operand: expression, isPostfix: true, location)
                 continue
@@ -1595,6 +1596,9 @@ open class MLProfileParser: MLParserBase {
 
     /// `a.b` のようにメンバーを取り出す記号。`->` を使う言語だけ足す。
     open var memberAccessOperators: [String] { [".", "?."] }
+
+    /// `++` / `--` を増減の演算子として扱うか (Zig では連結記号なので false)。
+    open var hasIncrementOperators: Bool { true }
 
     /// `!` を強制アンラップとして読むか (既定では読まない)。
     open func isForceUnwrapContext() -> Bool { false }
