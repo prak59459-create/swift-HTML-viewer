@@ -157,6 +157,17 @@ public final class MLInterpreter {
             klass.superclass = classes[superName]
         }
         klass.interfaceNames = decl.interfaceNames
+        klass.interfaces = decl.interfaceNames.compactMap {
+            classes[$0] ?? classes[MLInterpreter.baseTypeName($0)]
+        }
+        // 親クラスがインタフェースとして宣言されていた場合も取り込む。
+        if let superName = decl.superclassName,
+           let parent = classes[superName] ?? classes[MLInterpreter.baseTypeName(superName)],
+           parent.kind == .interfaceType {
+            klass.superclass = nil
+            klass.interfaces.append(parent)
+            klass.interfaceNames.append(parent.name)
+        }
         klass.properties = decl.properties
         klass.primaryParameters = decl.primaryParameters
         klass.bodyStatements = decl.bodyStatements
@@ -249,7 +260,19 @@ public final class MLInterpreter {
         globals.define(klass.name, .object(classToken(klass)), isConstant: true)
     }
 
-    public func lookupClass(_ name: String) -> MLClass? { classes[name] }
+    public func lookupClass(_ name: String) -> MLClass? {
+        classes[name] ?? classes[MLInterpreter.baseTypeName(name)]
+    }
+
+    /// `java.util.List<String>` → `List` のように、素の型名だけ取り出す。
+    public static func baseTypeName(_ typeName: String) -> String {
+        var text = typeName
+        if let marker = text.firstIndex(of: "<") { text = String(text[..<marker]) }
+        if let marker = text.lastIndex(of: ".") {
+            text = String(text[text.index(after: marker)...])
+        }
+        return text
+    }
 
     public func lookupCaseOwner(_ caseName: String) -> MLClass? { caseOwners[caseName] }
 
@@ -474,6 +497,11 @@ public final class MLInterpreter {
             if object.typeName == name { return true }
             if let klass = object.classDeclaration, klass.conforms(to: name) { return true }
             if object.caseName == name { return true }
+            // 組み込みの例外型など、継承関係を名前の並びで持っているもの。
+            if let ancestors = object.fields[.string("#types")]?.asArray,
+               ancestors.elements.contains(where: { $0.asString == name }) {
+                return true
+            }
         }
         switch value.forced {
         case .int:
@@ -771,12 +799,25 @@ public final class MLInterpreter {
                                     in: environment, location: location)
 
         case .construct(let typeName, let arguments, let location):
-            guard let klass = classes[typeName] else {
-                throw MLError.runtime("\(location) 型 \(typeName) が見つかりません")
-            }
             let resolved = try resolveArguments(arguments, in: environment)
-            return try instantiate(klass, arguments: resolved.values,
-                                   labels: resolved.labels, location: location)
+            // ジェネリクスや修飾は落として素の名前で探す。
+            let baseName = MLInterpreter.baseTypeName(typeName)
+            if let klass = classes[typeName] ?? classes[baseName] {
+                return try instantiate(klass, arguments: resolved.values,
+                                       labels: resolved.labels, location: location)
+            }
+            // 組み込みの型は生成関数として登録してある。
+            if let box = environment.lookup(baseName) {
+                if let klass = isClassToken(box.value) {
+                    return try instantiate(klass, arguments: resolved.values,
+                                           labels: resolved.labels, location: location)
+                }
+                if let function = box.value.asFunction {
+                    return try callFunction(function, arguments: resolved.values,
+                                            labels: resolved.labels, location: location)
+                }
+            }
+            throw MLError.runtime("\(location) 型 \(typeName) が見つかりません")
 
         case .unary(let op, let operand, let isPostfix, let location):
             return try evaluateUnary(op: op, operand: operand, isPostfix: isPostfix,

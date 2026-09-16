@@ -298,7 +298,9 @@ open class MLProfileParser: MLParserBase {
         // C 形式 `for (init; cond; step)`
         var initializer: [MLStmt] = []
         if !check(";") {
-            if let keyword = matchedVariableKeyword() {
+            if let declaration = try parseForInitializerDeclaration() {
+                initializer.append(declaration)
+            } else if let keyword = matchedVariableKeyword() {
                 initializer.append(try parseVariableDeclaration(keyword: keyword,
                                                                 location: current.location,
                                                                 consumesEnd: false))
@@ -324,6 +326,10 @@ open class MLProfileParser: MLParserBase {
         return .forClassic(initializer: initializer, condition: condition, step: step,
                            body: body, label: label, location)
     }
+
+    /// `for (int i = 0; ...)` のように型が先に来る宣言を読む言語だけが上書きする。
+    /// 文の終わりの `;` は消費しないこと。
+    open func parseForInitializerDeclaration() throws -> MLStmt? { nil }
 
     /// `for x in xs` を読めたら返す。読めなければ位置を戻して nil。
     open func parseForInHeader(location: SourceLocation, label: String?,
@@ -566,9 +572,28 @@ open class MLProfileParser: MLParserBase {
         }
     }
 
+    /// 型名として使えないキーワード (文を始める語)。
+    open var nonTypeKeywords: Set<String> {
+        baseNonTypeKeywords.union(profile.typeKeywords.keys)
+    }
+
+    private var baseNonTypeKeywords: Set<String> {
+        ["return", "if", "else", "while", "for", "foreach", "do", "switch", "match", "case",
+         "default", "break", "continue", "throw", "throws", "try", "catch", "finally",
+         "new", "delete", "import", "package", "using", "include", "require", "use",
+         "module", "namespace", "guard", "repeat", "when", "in", "is", "as", "where",
+         "then", "end", "goto", "yield", "await", "assert", "with", "super", "this",
+         "self", "true", "false", "null", "nil", "none", "print", "typeof", "sizeof",
+         "not", "and", "or", "instanceof", "extends", "implements", "let", "var", "val",
+         "const", "def", "func", "fn", "function", "lambda", "elif", "until", "loop",
+         "defer", "fallthrough", "select", "go", "spawn", "raise", "rescue", "ensure"]
+    }
+
     /// `int f(` のような形かどうかを先読みで見る。
     open func looksLikeTypeFirstFunction() -> Bool {
         guard current.kind == .identifier || current.kind == .keyword else { return false }
+        if nonTypeKeywords.contains(current.text),
+           !profile.ignorableModifiers.contains(current.text) { return false }
         var offset = 0
         // 修飾子を読み飛ばす。
         while profile.ignorableModifiers.contains(peek(offset).text) { offset += 1 }
@@ -584,7 +609,14 @@ open class MLProfileParser: MLParserBase {
             if text == "<" { depth += 1; offset += 1; continue }
             if text == ">" , depth > 0 { depth -= 1; offset += 1; continue }
             if depth > 0 { offset += 1; continue }
-            if text == "*" || text == "&" || text == "[" || text == "]" || text == "." {
+            // `java.util.List` のような修飾つきの型名。ただし `Arrays.sort(` のような
+            // メソッド呼び出しと取り違えないよう、次が `(` なら型名ではない。
+            if text == ".", peek(offset + 1).kind == .identifier,
+               !peek(offset + 2).is("(") {
+                offset += 2
+                continue
+            }
+            if text == "*" || text == "&" || text == "[" || text == "]" {
                 offset += 1
                 continue
             }
@@ -645,7 +677,11 @@ open class MLProfileParser: MLParserBase {
         } while !isAtEnd && depth > 0
     }
 
+    /// 引数リストのうしろに付く修飾子 (C++ の `const` / `noexcept` など)。
+    open var trailingFunctionQualifiers: Set<String> { [] }
+
     open func skipThrowsClause() {
+        while trailingFunctionQualifiers.contains(current.text) { advance() }
         if check("throws") || check("rethrows") {
             advance()
             while current.kind == .identifier {
@@ -653,6 +689,7 @@ open class MLProfileParser: MLParserBase {
                 if !match(",") { break }
             }
         }
+        while trailingFunctionQualifiers.contains(current.text) { advance() }
     }
 
     open func parseParameterList() throws -> [MLParameter] {
@@ -681,12 +718,24 @@ open class MLProfileParser: MLParserBase {
         // `name: Type`
         if match(":") {
             typeName = try parseTypeName()
-        } else if current.kind == .identifier || check("*") || check("&") || check("[") {
+        } else if current.kind == .identifier || check("*") || check("&") || check("[")
+                    || check("<") {
             // `Type name` (C / Java 形式)
             typeName = name
+            if check("<") { skipGenericParameters() }
             while match("*", "&") {}
+            while check("["), peek(1).is("]") {
+                advance()
+                advance()
+                typeName = "Array<\(typeName ?? "")>"
+            }
+            if match("...") { isVariadic = true }
             name = try expectIdentifier("引数名")
-            while match("[") { try expect("]", "配列の引数") }
+            while check("["), peek(1).is("]") {
+                advance()
+                advance()
+                typeName = "Array<\(typeName ?? "")>"
+            }
         } else if check("label") {
             label = name
         }
@@ -833,11 +882,50 @@ open class MLProfileParser: MLParserBase {
         public init() {}
     }
 
+    /// 列挙のケースに `case` キーワードが要るか (Java / C# は不要)。
+    open var enumCasesNeedKeyword: Bool { true }
+
     open func parseTypeBody(kind: MLTypeDecl.Kind, typeName: String) throws -> TypeBody {
         var body = TypeBody()
         guard match("{") else {
             consumeStatementEnd()
             return body
+        }
+        // Java / C# の列挙は `case` を書かず、本体の先頭に定数を並べる。
+        if kind == .enumType, !enumCasesNeedKeyword {
+            while !isAtEnd, !check("}"), !check(";") {
+                skipStatementSeparators()
+                if check("}") || check(";") { break }
+                // アノテーションは読み飛ばす。
+                while check("@") {
+                    advance()
+                    if current.kind == .identifier { advance() }
+                    if check("(") { skipBalanced(open: "(", close: ")") }
+                }
+                guard current.kind == .identifier else { break }
+                let caseName = advance().text
+                var associatedTypes: [String] = []
+                if check("(") {
+                    // `RED(255, 0, 0)` の引数はケースの付随値として持たせる。
+                    advance()
+                    var index = 0
+                    while !isAtEnd, !check(")") {
+                        _ = try parseExpression()
+                        associatedTypes.append("Object")
+                        index += 1
+                        if !match(",") { break }
+                    }
+                    try expect(")", "列挙の引数")
+                }
+                if check("{") { skipBalanced(open: "{", close: "}") }
+                var rawValue: MLExpr?
+                if match("=") { rawValue = try parseExpression() }
+                body.cases.append(MLCaseDecl(name: caseName,
+                                             associatedTypes: associatedTypes,
+                                             rawValue: rawValue))
+                if !match(",") { break }
+            }
+            _ = match(";")
         }
         while !isAtEnd, !check("}") {
             skipStatementSeparators()
@@ -894,12 +982,17 @@ open class MLProfileParser: MLParserBase {
         }
         _ = sawModifier
 
+        // `static <T> void show(...)` のような総称メソッドの型引数。
+        if check("<") { skipGenericParameters() }
+
         if let nestedKind = matchedTypeKeyword() {
             body.nestedTypes.append(try parseTypeDeclaration(kind: nestedKind))
             return
         }
 
-        if isFunctionDeclarationStart() || current.text == "init" {
+        // `Base(String name) { ... }` のようなコンストラクタ。
+        let isConstructor = current.text == typeName && peek(1).is("(")
+        if isConstructor || isFunctionDeclarationStart() || current.text == "init" {
             let function = try parseTypeMethod(isStatic: isStatic, isAbstract: isAbstract,
                                                typeName: typeName)
             if function.isInitializer { body.initializers.append(function) }
@@ -1048,6 +1141,7 @@ open class MLProfileParser: MLParserBase {
         guard peek(offset).kind == .identifier || peek(offset).kind == .keyword else {
             return false
         }
+        if nonTypeKeywords.contains(peek(offset).text) { return false }
         offset += 1
         var depth = 0
         while true {
@@ -1299,13 +1393,24 @@ open class MLProfileParser: MLParserBase {
             case "new":
                 advance()
                 let typeName = try parseTypeName()
+                // `new int[]{1, 2}` / `new Color[]{...}` は型名が `Array<...>` になる。
+                if check("{") {
+                    let items = try parseArrayInitializer()
+                    return .listLiteral(items, spreadIndices: [], location)
+                }
                 var arguments: [MLArgument] = []
                 if check("(") { arguments = try parseArgumentList() }
                 else if check("[") {
-                    // `new int[10]`
+                    // `new int[10]` / `new int[3][]`
                     advance()
                     let size = check("]") ? nil : try parseExpression()
                     try expect("]", "配列の生成")
+                    // 残りの `[]` / `[n]` は読み捨てて 1 次元として扱う。
+                    while check("[") {
+                        advance()
+                        if !check("]") { _ = try parseExpression() }
+                        try expect("]", "配列の生成")
+                    }
                     if check("{") {
                         let items = try parseArrayInitializer()
                         return .listLiteral(items, spreadIndices: [], location)

@@ -11,7 +11,13 @@ public enum MiniLangRegistry {
 
     /// 登録順 (README や設定画面の並びにも使う)。
     public static let all: [MiniLangEngine.Type] = [
-        MiniScala.self
+        MiniJava.self,
+        MiniCSharp.self,
+        MiniKotlin.self,
+        MiniScala.self,
+        MiniGo.self,
+        MiniRust.self,
+        MiniCpp.self
     ]
 
     public static func engine(for languageID: String) -> MiniLangEngine.Type? {

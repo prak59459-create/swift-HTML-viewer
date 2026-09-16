@@ -266,6 +266,8 @@ public final class MLClass {
     public let kind: MLTypeDecl.Kind
     public var superclass: MLClass?
     public var interfaceNames: [String] = []
+    /// 解決済みのインタフェース (既定実装のメソッドを引き継ぐ)。
+    public var interfaces: [MLClass] = []
     /// インスタンスメソッド (名前 → 関数)。同名多重定義は配列で持つ。
     public var methods: [String: [MLFunctionDecl]] = [:]
     public var staticMethods: [String: [MLFunctionDecl]] = [:]
@@ -289,9 +291,31 @@ public final class MLClass {
         self.kind = kind
     }
 
-    /// 自分と祖先からメソッドを探す。
+    /// 自分と祖先からメソッドを探す。見つからなければインタフェースの既定実装も見る。
     public func findMethod(_ name: String) -> (decls: [MLFunctionDecl], owner: MLClass)? {
         var current: MLClass? = self
+        while let klass = current {
+            if let decls = klass.methods[name], !decls.isEmpty, !decls[0].isAbstract {
+                return (decls, klass)
+            }
+            current = klass.superclass
+        }
+        // インタフェースの既定実装 (Java の default メソッドなど)。
+        var visited = Set<ObjectIdentifier>()
+        func search(_ klass: MLClass) -> (decls: [MLFunctionDecl], owner: MLClass)? {
+            guard visited.insert(ObjectIdentifier(klass)).inserted else { return nil }
+            for interface in klass.interfaces {
+                if let decls = interface.methods[name], !decls.isEmpty, !decls[0].isAbstract {
+                    return (decls, interface)
+                }
+                if let found = search(interface) { return found }
+            }
+            if let superclass = klass.superclass { return search(superclass) }
+            return nil
+        }
+        if let found = search(self) { return found }
+        // 抽象宣言しか無い場合はそれを返す (エラーメッセージのため)。
+        current = self
         while let klass = current {
             if let decls = klass.methods[name], !decls.isEmpty { return (decls, klass) }
             current = klass.superclass
@@ -334,6 +358,9 @@ public final class MLClass {
         while let klass = current {
             if klass.name == name { return true }
             if klass.interfaceNames.contains(name) { return true }
+            for interface in klass.interfaces where interface.conforms(to: name) {
+                return true
+            }
             current = klass.superclass
         }
         return false

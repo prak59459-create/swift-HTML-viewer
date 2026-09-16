@@ -90,6 +90,27 @@ open class MLLexerBase {
         return source[index]
     }
 
+    /// 読み取り位置を戻す (先読みして駄目だったときのやり直し用)。
+    public func setPosition(_ newPosition: Int) {
+        let target = max(0, min(newPosition, source.count))
+        if target < position {
+            // 行・桁を数え直す。
+            line = 1
+            column = 1
+            for index in 0..<target {
+                if source[index] == "\n" {
+                    line += 1
+                    column = 1
+                } else {
+                    column += 1
+                }
+            }
+            position = target
+            return
+        }
+        while position < target { advance() }
+    }
+
     @discardableResult
     public func advance() -> Character? {
         guard position < source.count else { return nil }
