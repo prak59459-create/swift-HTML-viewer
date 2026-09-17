@@ -92,11 +92,36 @@ public enum GitHubClientError: LocalizedError {
 /// GitHub REST API (と raw.githubusercontent.com) からコンテンツを取得する。
 public struct GitHubClient {
     public var token: String?
-    private let session: URLSession
+    /// API のホスト。GitHub Enterprise では自分のホストに差し替える。
+    public var apiHost: String
+    /// 生ファイルのホスト。
+    public var rawHost: String
+    /// 応答ヘッダからレート制限を記録する先 (任意)。
+    public var rateLimitMonitor: RateLimitMonitor?
+    let session: URLSession
 
-    public init(token: String? = nil, session: URLSession = .shared) {
+    public init(token: String? = nil, session: URLSession = .shared,
+                apiHost: String = "api.github.com",
+                rawHost: String = "raw.githubusercontent.com",
+                rateLimitMonitor: RateLimitMonitor? = nil) {
         self.token = (token?.isEmpty == false) ? token : nil
         self.session = session
+        self.apiHost = apiHost.isEmpty ? "api.github.com" : apiHost
+        self.rawHost = rawHost.isEmpty ? "raw.githubusercontent.com" : rawHost
+        self.rateLimitMonitor = rateLimitMonitor
+    }
+
+    /// API の URL を組み立てる。
+    func apiURL(_ path: String, query: [String: String] = [:]) -> URL {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = apiHost
+        components.path = path.hasPrefix("/") ? path : "/" + path
+        if !query.isEmpty {
+            components.queryItems = query.sorted { $0.key < $1.key }
+                .map { URLQueryItem(name: $0.key, value: $0.value) }
+        }
+        return components.url ?? URL(string: "https://\(apiHost)\(path)")!
     }
 
     // MARK: - 公開 API
@@ -258,13 +283,26 @@ public struct GitHubClient {
             .joined(separator: "/")
     }
 
-    private func get(_ url: URL, accept: String?) async throws -> Data {
+    func get(_ url: URL, accept: String?) async throws -> Data {
+        try await send(url, method: "GET", accept: accept, body: nil).0
+    }
+
+    /// 任意のメソッドで送る。応答ヘッダも返す。
+    @discardableResult
+    func send(_ url: URL, method: String, accept: String?,
+              body: Data?) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
+        request.httpMethod = method
         request.setValue("GitHubViewer", forHTTPHeaderField: "User-Agent")
         if let accept { request.setValue(accept, forHTTPHeaderField: "Accept") }
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let body {
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
 
         let (data, http) = try await HTTP.send(request, session: session)
+        rateLimitMonitor?.update(from: http)
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 403 || http.statusCode == 429,
                http.value(forHTTPHeaderField: "x-ratelimit-remaining") == "0" {
@@ -274,10 +312,10 @@ public struct GitHubClient {
             let message = apiMessage(from: data) ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw GitHubClientError.http(status: http.statusCode, message: message)
         }
-        return data
+        return (data, http)
     }
 
-    private func apiMessage(from data: Data) -> String? {
+    func apiMessage(from data: Data) -> String? {
         struct APIError: Decodable { let message: String }
         return (try? JSONDecoder().decode(APIError.self, from: data))?.message
     }
