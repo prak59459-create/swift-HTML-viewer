@@ -1256,7 +1256,7 @@ public final class MLInterpreter {
                 box.value = value
                 return
             }
-            if semantics.requiresDefinitionBeforeUse {
+            if !semantics.assignmentDefinesNewVariables {
                 throw MLError.runtime("\(location) \(name) が見つかりません")
             }
             environment.functionScope.define(name, value)
@@ -1498,6 +1498,10 @@ public final class MLInterpreter {
 
     public func subscriptValue(_ receiver: MLValue, index: MLValue,
                                location: SourceLocation) throws -> MLValue {
+        if let custom = try semantics.subscriptValue(of: receiver, index: index,
+                                                     interpreter: self) {
+            return custom
+        }
         // `xs[1..3]` のように範囲で引いたら切り出しになる。
         if case .range(let range) = index.forced {
             return try slice(receiver, from: .int(range.lower),

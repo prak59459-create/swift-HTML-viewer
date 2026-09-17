@@ -27,6 +27,8 @@ open class MLSemantics {
     open var integerDivisionTruncatesTowardZero: Bool { true }
     /// 未初期化の変数を読んだらエラーにするか。
     open var requiresDefinitionBeforeUse: Bool { true }
+    /// 代入だけで新しい変数ができるか (読み出しは未定義エラーのままにできる)。
+    open var assignmentDefinesNewVariables: Bool { !requiresDefinitionBeforeUse }
     /// 関数に足りない引数が来たらカリー化するか。
     open var curriesByDefault: Bool { false }
     /// 添字外アクセスを実行時エラーにするか (false なら nil を返す)。
@@ -152,6 +154,12 @@ open class MLSemantics {
     open func value(_ value: MLValue, matchesDeclaredType typeName: String,
                     interpreter: MLInterpreter) -> Bool {
         true
+    }
+
+    /// `value[index]` の読み出し。`nil` を返すと共通処理にまかせる。
+    open func subscriptValue(of receiver: MLValue, index: MLValue,
+                             interpreter: MLInterpreter) throws -> MLValue? {
+        nil
     }
 
     /// `value.name` の読み出し。`nil` を返すと共通処理にまかせる。
