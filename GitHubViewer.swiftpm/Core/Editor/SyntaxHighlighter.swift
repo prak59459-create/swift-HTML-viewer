@@ -384,6 +384,8 @@ public enum SyntaxHighlighter {
                    "inline", "int", "long", "register", "restrict", "return", "short",
                    "signed", "sizeof", "static", "struct", "switch", "typedef", "union",
                    "unsigned", "void", "volatile", "while", "_Bool", "NULL"],
+        functionSyntax: .typeFirst,
+        functionKeywords: [],
         variableKeywords: [:],
         typeKeywords: ["struct": .structType, "union": .structType, "enum": .enumType],
         nullLiterals: ["NULL"], trueLiterals: ["true"], falseLiterals: ["false"],
