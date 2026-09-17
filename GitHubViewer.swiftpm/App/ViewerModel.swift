@@ -270,6 +270,29 @@ final class ViewerModel: ObservableObject {
                         + ", \(execution.executedSteps) 命令"
                         + (execution.warningCount > 0 ? ", 警告 \(execution.warningCount) 件" : "") + ")"
                 }
+
+            case .miniLang(let engineID):
+                guard let engine = MiniLangRegistry.engine(for: engineID) else {
+                    statusText = "内蔵処理系が見つかりません (\(engineID))"
+                    break
+                }
+                statusText = "\(language.name) を内蔵処理系で実行中…"
+                let execution = engine.execute(source: source, input: stdin,
+                                               limits: .default)
+                disassembly = ""
+                executionOutput = ExecutionOutput(
+                    languageVersion: engine.displayName,
+                    compileOutput: execution.diagnosticsText,
+                    stdout: execution.output,
+                    stderr: execution.runtimeError ?? "",
+                    exitCode: Int(execution.exitCode))
+                if !execution.parsed {
+                    statusText = "構文エラー: \(execution.errorCount) 件"
+                } else if let runtimeError = execution.runtimeError {
+                    statusText = runtimeError
+                } else {
+                    statusText = "実行完了"
+                }
             }
 
         case .browser:

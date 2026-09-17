@@ -23,16 +23,21 @@ public enum LocalEngine: String, Equatable, CaseIterable {
 }
 
 /// アプリに内蔵しているコンパイラ。端末内で完結し、ネットワークも使わない。
-public enum BuiltinCompiler: String, Equatable {
+public enum BuiltinCompiler: Equatable {
     case miniC
     case miniPHP
     case miniSwift
+    /// 共通基盤の上に作った処理系 (言語 ID で選ぶ)。
+    case miniLang(String)
 
     public var displayName: String {
         switch self {
         case .miniC: return "内蔵 C コンパイラ (端末内)"
         case .miniPHP: return "内蔵 PHP インタプリタ (端末内)"
         case .miniSwift: return "内蔵 Swift インタプリタ (端末内)"
+        case .miniLang(let id):
+            let name = MiniLangRegistry.engine(for: id)?.displayName ?? "内蔵処理系"
+            return name + " (端末内)"
         }
     }
 }
@@ -110,7 +115,26 @@ public enum ExecutionPlan: Equatable {
 
 /// 拡張子と言語の対応表。
 public enum LanguageCatalog {
-    public static let all: [ProgrammingLanguage] = [
+    /// 内蔵処理系を割り当てたあとの一覧。
+    public static let all: [ProgrammingLanguage] = definitions.map { language in
+        var updated = language
+        if updated.builtin == nil, updated.local == nil,
+           let engineID = builtinLanguageID(for: language.id),
+           MiniLangRegistry.engine(for: engineID) != nil {
+            updated.builtin = .miniLang(engineID)
+        }
+        return updated
+    }
+
+    /// カタログの言語 ID を内蔵処理系の言語 ID に直す。
+    static func builtinLanguageID(for id: String) -> String? {
+        switch id {
+        case "bash": return "shell"
+        default: return id
+        }
+    }
+
+    private static let definitions: [ProgrammingLanguage] = [
         // --- 端末内 (WebAssembly / JavaScript) で実行できるもの ---
         ProgrammingLanguage(id: "javascript", name: "JavaScript", fileExtensions: ["js", "mjs", "cjs"],
                             local: .javascript,

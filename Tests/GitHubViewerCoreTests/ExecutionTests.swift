@@ -31,17 +31,37 @@ final class LanguageCatalogTests: XCTestCase {
         XCTAssertEqual(language.id, "c")
     }
 
-    func testCompiledLanguageNeedsServer() {
-        let denied = LanguageCatalog.plan(kind: .code(language: "rust"), fileName: "main.rs",
-                                          allowsRemoteExecution: false)
-        guard case .unavailable = denied else { return XCTFail("\(denied)") }
+    func testCompiledLanguageUsesTheBuiltInEngine() {
+        // Rust も内蔵処理系で動くので、サーバーを許可していなくても実行できる。
+        let offline = LanguageCatalog.plan(kind: .code(language: "rust"), fileName: "main.rs",
+                                           allowsRemoteExecution: false)
+        guard case .builtin(let compiler, let language) = offline else {
+            return XCTFail("\(offline)")
+        }
+        XCTAssertEqual(compiler, .miniLang("rust"))
+        XCTAssertEqual(language.id, "rust")
 
-        let allowed = LanguageCatalog.plan(kind: .code(language: "rust"), fileName: "main.rs",
-                                           allowsRemoteExecution: true)
-        guard case .remote(let spec, _) = allowed else { return XCTFail("\(allowed)") }
+        // 内蔵処理系を使わない設定にすれば、これまでどおりサーバー実行になる。
+        let remote = LanguageCatalog.plan(for: language, allowsRemoteExecution: true,
+                                          prefersLocal: false)
+        guard case .remote(let spec, _) = remote else { return XCTFail("\(remote)") }
         XCTAssertEqual(spec.pistonLanguage, "rust")
         XCTAssertEqual(spec.wandboxLanguage, "Rust")
         XCTAssertEqual(spec.fileName, "main.rs")
+    }
+
+    func testEveryBuiltInEngineIsReachableFromTheCatalog() {
+        // 内蔵処理系はすべて、どれかの言語から選べるようになっていること。
+        var reachable: Set<String> = []
+        for language in LanguageCatalog.all {
+            guard case .miniLang(let id)? = language.builtin else { continue }
+            reachable.insert(id)
+        }
+        for engine in MiniLangRegistry.all where engine.languageID != "javascript"
+            && engine.languageID != "typescript" {
+            XCTAssertTrue(reachable.contains(engine.languageID),
+                          "\(engine.languageID) がカタログから選べません")
+        }
     }
 
     func testUnknownExtensionIsNotRunnable() {

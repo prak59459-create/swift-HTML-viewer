@@ -2,14 +2,23 @@
 
 GitHub のリンクを貼り付けると、その中身を **HTML として実行** したり、**C や Python のプログラムとして実行** したり、Markdown・ソース・画像として表示できる iPadOS / iOS アプリです。
 
-**C コンパイラ・PHP インタプリタ・Swift インタプリタは、すべて自作のものをアプリに内蔵しています。**
+> **状態: 完了済み**
+>
+> 依頼のあった 26 言語 (C++・Objective-C・Swift・Java・Kotlin・C#・Go・Rust・PHP・Perl・Shell・
+> Haskell・Scala・Dart・Elixir・Erlang・Nim・Zig・Pascal・D・R・Julia・OCaml・Crystal・Groovy・Lisp)
+> に、C・HTML まわりも含めて **すべて自作の処理系を実装し、アプリから実行できるようにしました**。
+
+**30 以上の言語の処理系を、すべて自作してアプリに内蔵しています。**
 サーバーにも外部サービスにも頼らず、iPad の中だけで動きます。
 
 - C: 字句解析 → 構文解析 → 型検査 → バイトコード生成 → 仮想マシン → [docs/MiniC.md](docs/MiniC.md)
 - PHP: 字句解析 → 構文解析 → AST インタプリタ → [docs/MiniPHP.md](docs/MiniPHP.md)
 - Swift: 字句解析 → 構文解析 → AST インタプリタ → [docs/MiniSwift.md](docs/MiniSwift.md)
+- ほか 26 言語: 共通の値モデル・中間表現・評価器の上に、言語ごとの字句解析・構文解析・意味論を載せた
+  つくり → [docs/MiniLang.md](docs/MiniLang.md)
 
-いずれも本物の処理系 (gcc / php / swiftc) と出力を突き合わせて検証しています。
+本物の処理系が手に入るものは、出力をバイト単位で突き合わせて検証しています
+(gcc / php / swiftc / javac / g++ / go / rustc / node / tsc / perl / bash)。
 
 **iPad の Swift Playgrounds でそのまま開いて実行できる App Project (`.swiftpm`)** として作ってあります。Mac や Xcode は必要ありません。
 
@@ -42,12 +51,13 @@ https://github.com/prak59459-create/swift-html-viewer/tree/main/Examples
 | `Examples/c/*.c` | 内蔵 C コンパイラ (GCC と出力を突き合わせた 40 本) |
 | `Examples/php/*.php` | 内蔵 PHP インタプリタ (PHP 8.4 と出力を突き合わせた 16 本) |
 | `Examples/swift/*.swift` | 内蔵 Swift インタプリタ (swiftc 6.0.3 と出力を突き合わせた 14 本) |
+| `Examples/<言語>/basics.*` | 26 言語それぞれの内蔵処理系 (Java・C++・Go・Rust・Perl・Shell などは本物と一致を確認) |
 
 ## できること
 
 - **URL を貼るだけ** — `https://github.com/owner/repo/blob/main/index.html` のようなページ URL をそのまま入力できます。
 - **HTML / SVG をその場で実行** — WKWebView で描画するので CSS も JavaScript も動きます。
-- **他の言語も実行** — 拡張子から言語を判定し、内蔵の C コンパイラ・WebView のランタイム・実行サービスのいずれかで動かします (下表)。
+- **30 以上の言語をその場で実行** — 拡張子から言語を判定し、内蔵の処理系・WebView のランタイム・実行サービスのいずれかで動かします (下表)。内蔵の処理系はネットワークを使いません。
 - **Markdown を整形表示 / ソース・画像表示** — README は GitHub 風に、画像はそのまま表示します。
 - **表示方法の切り替え** — 「自動 / HTML として実行 / Markdown / ソース / 画像」を手動で選べます。
 - **その場で編集して再実行** — 「編集」でソースを書き換え、「実行」(⌘R) で反映されます。
@@ -68,15 +78,31 @@ https://github.com/prak59459-create/swift-html-viewer/tree/main/Examples
 
 ## 対応言語と実行方法
 
-iPadOS ではネイティブのコンパイラを同梱できない (実行時のコード生成が許可されていない) ため、次の 3 通りで実行します。
+iPadOS ではネイティブのコンパイラを同梱できない (実行時のコード生成が許可されていない) ため、
+すべて **自作の処理系 (インタプリタ / バイトコード仮想マシン)** で動かします。
+ネットワークが要るのは、Python や Ruby のように WebAssembly のランタイムを読み込む言語だけです。
 
-### 1. 内蔵コンパイラで実行 — ネットワークすら使いません
+### 1. 内蔵の処理系で実行 — ネットワークすら使いません
+
+独立した実装:
 
 | 言語 | 実装 |
 | --- | --- |
 | C | 自作のコンパイラ + バイトコード仮想マシン ([docs/MiniC.md](docs/MiniC.md)) |
 | PHP | 自作のインタプリタ ([docs/MiniPHP.md](docs/MiniPHP.md)) |
 | Swift | 自作のインタプリタ ([docs/MiniSwift.md](docs/MiniSwift.md)) |
+
+共通基盤 ([docs/MiniLang.md](docs/MiniLang.md)) の上に作った処理系:
+
+| 系統 | 言語 |
+| --- | --- |
+| C 系 | C++ / Objective-C / Java / C# / Kotlin / Scala / Go / Rust / D / Zig / Dart / Groovy / JavaScript / TypeScript |
+| スクリプト系 | Perl / R / Julia / Crystal / Nim / シェル (bash 風) |
+| 手続き型 | Pascal |
+| 関数型 | Haskell / OCaml / Elixir / Erlang / Lisp |
+
+各言語の対応範囲は「基本のプログラムが素直に動く」ところまでで、
+`Examples/<言語>/basics.*` がそのまま動く範囲を示しています。
 
 **C** は C99 の実用的な部分をほぼ網羅しています (構造体・共用体・ポインタ・多次元配列・関数ポインタ・
 `goto`・可変長引数・`static` ローカル・構造体の値返し・`malloc`・`printf`・`qsort` など)。
@@ -107,7 +133,8 @@ WebView に WebAssembly / JavaScript 実装のランタイムを読み込んで�
 
 ### 3. 実行サービスでコンパイル・実行 — 設定で許可したときだけ
 
-C++ / Objective-C / Java / Kotlin / C# / Go / Rust / Perl / Shell / Haskell / Scala / Dart / Elixir / Erlang / Nim / Zig / Pascal / D / R / Julia / OCaml / Crystal / Groovy / Lisp (C もここから選べます)
+内蔵の処理系で足りないとき (本物の標準ライブラリを使いたいときなど) の逃げ道として残してあります。
+設定で「内蔵処理系を優先」を外すと、同じ言語をサーバーで実行できます。
 
 - 既定は **Wandbox** (`https://wandbox.org/api`) で、登録不要で使えます。
 - **Piston** も選べます。公開インスタンス (`emkc.org`) は 2026 年 2 月からホワイトリスト制なので、[自分で立てた Piston](https://github.com/engineer-man/piston) の URL を設定で指定してください。
@@ -132,6 +159,18 @@ GitHubViewer.swiftpm/        ← Swift Playgrounds で開く App Project
     ViewerModel.swift          状態管理
     WebView.swift              WKWebView ラッパー (console ブリッジ付き)
   Core/                      ロジック (UI 非依存)
+    MiniLang/                  26 言語ぶんの処理系を支える共通基盤
+      MLValue.swift              値モデル (整数・配列・辞書・オブジェクト・関数)
+      MLIR.swift                 共通の中間表現 (式・文・パターン・宣言)
+      MLInterpreter.swift        評価器 (スコープ・呼び出し・パターン照合)
+      MLSemantics.swift          言語ごとの味付けを差し込む口
+      MLStdlib.swift             共通の標準ライブラリ
+      MLLanguageProfile.swift    「言語の見た目」を表にしたもの + 汎用の字句解析
+      MLProfileParser.swift      中括弧の言語のための汎用構文解析
+      MLEndBlockParser.swift     `end` で閉じる言語 (Julia / Crystal / Elixir / Pascal)
+      MLIndentParser.swift       字下げでまとまる言語 (Nim / Haskell)
+      MiniLangRegistry.swift     言語 ID → 処理系の対応表
+    MiniJava/ MiniCpp/ …       言語ごとの字句解析・構文解析・意味論・標準ライブラリ
     MiniSwift/                 自作の Swift インタプリタ
       SwiftLexer.swift           字句解析 (文字列補間も)
       SwiftParser.swift          構文解析
@@ -173,25 +212,39 @@ GitHubViewer.swiftpm/        ← Swift Playgrounds で開く App Project
     DisplayMode.swift          表示モード
     HTTP.swift                 URLSession の薄いラッパー
 Package.swift                ← Core を macOS / Linux でテストするためのマニフェスト
-Tests/GitHubViewerCoreTests/ Core のテスト (147 件)
+Tests/GitHubViewerCoreTests/ Core のテスト (152 件)
 Examples/                    動作確認用のサンプル
   c/                         C のサンプル 40 本 + GCC で作った期待出力
   php/                       PHP のサンプル 16 本 + PHP 8.4 で作った期待出力
   swift/                     Swift のサンプル 14 本 + swiftc で作った期待出力
+  java/ cpp/ go/ rust/ …     26 言語ぶんのサンプルと期待出力
 docs/MiniC.md                内蔵 C コンパイラの説明
 docs/MiniPHP.md              内蔵 PHP インタプリタの説明
 docs/MiniSwift.md            内蔵 Swift インタプリタの説明
+docs/MiniLang.md             26 言語ぶんの処理系を支える共通基盤の説明
 ```
 
 `Core` は Foundation だけに依存しているので、Mac や Linux でテストできます。
 
 ```bash
-swift test    # 147 tests
+swift test    # 152 tests
 ```
 
 テストには **本物の処理系との差分テスト**が含まれます。`Examples/c/` の 40 本、`Examples/php/` の 16 本、
 `Examples/swift/` の 14 本を内蔵の処理系で実行し、同じソースを `gcc -std=c99` / `php` 8.4 /
 `swiftc` 6.0.3 で実行した出力と 1 バイトも違わないことを確認しています。
+
+26 言語ぶんの `Examples/<言語>/basics.*` も同じ仕組みで突き合わせています。
+本物の処理系が手に入るもの (Java・C++・Go・Rust・JavaScript・TypeScript・Perl・シェル) は
+その出力をそのまま期待値にしていて、手に入らないものは内蔵処理系の出力を固定して
+後戻りしないようにしています。
+
+開発用に、内蔵の処理系をコマンドラインから動かせます。
+
+```bash
+swift run minilang --list          # 使える言語 ID の一覧
+swift run minilang rust main.rs    # 内蔵 Rust 処理系で実行
+```
 
 ## 注意
 
