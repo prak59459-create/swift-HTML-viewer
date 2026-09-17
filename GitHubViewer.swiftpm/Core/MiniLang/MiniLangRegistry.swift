@@ -33,7 +33,8 @@ public enum MiniLangRegistry {
         MiniR.self,
         MiniLisp.self,
         MiniElixir.self,
-        MiniShell.self
+        MiniShell.self,
+        MiniErlang.self
     ]
 
     public static func engine(for languageID: String) -> MiniLangEngine.Type? {

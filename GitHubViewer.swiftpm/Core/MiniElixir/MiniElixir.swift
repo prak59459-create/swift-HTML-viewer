@@ -463,6 +463,11 @@ final class ElixirParser: MLEndBlockParser {
 
     // MARK: パターン
 
+    /// `|` はリストの残りを表すので、選択パターンとして読まない。
+    override func parsePattern() throws -> MLPattern {
+        try parsePrimaryPattern()
+    }
+
     override func parsePrimaryPattern() throws -> MLPattern {
         let location = current.location
         if let token = matchKind(.symbol) { return .literal(.symbol(token.text)) }
@@ -481,11 +486,12 @@ final class ElixirParser: MLEndBlockParser {
             var items: [MLPattern] = []
             var restName: String?
             while !isAtEnd, !check("]") {
+                items.append(try parsePattern())
+                // `[H|T]` の残りの部分。
                 if match("|") {
                     restName = try expectIdentifier("残りの名前")
                     break
                 }
-                items.append(try parsePattern())
                 if !match(",") { break }
             }
             try expect("]", "リストの終わり")
