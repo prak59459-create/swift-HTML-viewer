@@ -1,0 +1,18 @@
+fib: @[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+sum = 25
+len = 5
+max = 9
+point: (3, 4)
+shifted: 4
+area = 12.56636
+a=3 b=2 c=1
+i=0
+i=1
+i=2
+seven
+green
+caught: invalid integer: abc
+10 div 3 = 3
+10 mod 3 = 1
+upper: HELLO
+joined: a-b-c

@@ -1,0 +1,20 @@
+<?php
+$words = ['banana', 'apple', 'cherry', 'apple', 'date'];
+echo implode(",", array_unique($words)), "\n";
+sort($words);
+echo implode(",", $words), "\n";
+echo implode(",", array_slice($words, 1, 3)), "\n";
+echo json_encode(array_chunk([1,2,3,4,5], 2)), "\n";
+echo json_encode(array_flip(['a' => 1, 'b' => 2])), "\n";
+echo json_encode(array_combine(['x','y'], [10, 20])), "\n";
+$records = [['id' => 1, 'name' => 'a'], ['id' => 2, 'name' => 'b']];
+echo json_encode(array_column($records, 'name', 'id')), "\n";
+echo json_encode(array_diff([1,2,3,4], [2,4])), "\n";
+echo json_encode(array_intersect([1,2,3,4], [2,4,5])), "\n";
+echo json_encode(array_merge(['a'=>1], ['b'=>2], [5, 6])), "\n";
+echo json_encode(array_reverse([1,2,3])), " ", json_encode(array_reverse(['x'=>1,'y'=>2])), "\n";
+echo json_encode(range('a', 'e')), " ", json_encode(range(0, 10, 5)), " ", json_encode(range(5, 1)), "\n";
+echo in_array("2", [1,2,3]) ? "loose" : "-", " ", in_array("2", [1,2,3], true) ? "strict" : "-", "\n";
+echo array_search(3, [1,2,3]), " ", json_encode(array_keys(['a'=>1,'b'=>2])), "\n";
+var_export([1, 'k' => 'v']);
+echo "\n";

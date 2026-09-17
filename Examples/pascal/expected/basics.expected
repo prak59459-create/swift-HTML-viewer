@@ -1,0 +1,17 @@
+fib: 0 1 1 2 3 5 8 13 21 34
+total = 55
+swapped: 8 3
+point = (3, 4)
+color = green
+upper = HELLO, PASCAL
+length = 13
+copy = Hello
+pos = 8
+i = 0
+i = 1
+i = 2
+repeat -> 3
+17 div 5 = 3
+17 mod 5 = 2
+avg = 3.400
+caught a conversion error

@@ -1,0 +1,24 @@
+fib: [0,1,1,2,3,5,8,13,21,34]
+sum: 25
+lists:sum: 25
+squares: [25,9,81,1,49]
+big: [5,9,7]
+sorted: [1,3,5,7,9]
+reversed: [7,1,9,3,5]
+length: 5
+folded: 25
+-5 is negative
+0 is zero
+3 is small
+42 is large
+point 3,4
+circle r=2
+unknown
+x=3 y=4
+name: Alice age: 30
+case: seven
+if: yes
+concat: [1,2,3,4]
+div: 3 rem: 2
+upper: HELLO ERLANG
+joined: a-b-c

@@ -1,1 +1,255 @@
-# swift-HTML-viewer
+# GitHub Viewer (iPad / iPhone)
+
+GitHub のリンクを貼り付けると、その中身を **HTML として実行** したり、**C や Python のプログラムとして実行** したり、Markdown・ソース・画像として表示できる iPadOS / iOS アプリです。
+
+> **状態: 完了済み**
+>
+> 依頼のあった 26 言語 (C++・Objective-C・Swift・Java・Kotlin・C#・Go・Rust・PHP・Perl・Shell・
+> Haskell・Scala・Dart・Elixir・Erlang・Nim・Zig・Pascal・D・R・Julia・OCaml・Crystal・Groovy・Lisp)
+> に、C・HTML まわりも含めて **すべて自作の処理系を実装し、アプリから実行できるようにしました**。
+
+**30 以上の言語の処理系を、すべて自作してアプリに内蔵しています。**
+サーバーにも外部サービスにも頼らず、iPad の中だけで動きます。
+
+- C: 字句解析 → 構文解析 → 型検査 → バイトコード生成 → 仮想マシン → [docs/MiniC.md](docs/MiniC.md)
+- PHP: 字句解析 → 構文解析 → AST インタプリタ → [docs/MiniPHP.md](docs/MiniPHP.md)
+- Swift: 字句解析 → 構文解析 → AST インタプリタ → [docs/MiniSwift.md](docs/MiniSwift.md)
+- ほか 26 言語: 共通の値モデル・中間表現・評価器の上に、言語ごとの字句解析・構文解析・意味論を載せた
+  つくり → [docs/MiniLang.md](docs/MiniLang.md)
+
+本物の処理系が手に入るものは、出力をバイト単位で突き合わせて検証しています
+(gcc / php / swiftc / javac / g++ / go / rustc / node / tsc / perl / bash)。
+
+**iPad の Swift Playgrounds でそのまま開いて実行できる App Project (`.swiftpm`)** として作ってあります。Mac や Xcode は必要ありません。
+
+![platform](https://img.shields.io/badge/platform-iPadOS%20%2F%20iOS%2016%2B-lightgrey) ![swift](https://img.shields.io/badge/Swift%20Playgrounds-4.4%2B-orange)
+
+## 使い方 (iPad)
+
+1. iPad に **Swift Playgrounds** (App Store) を入れる。
+2. このリポジトリを iPad にダウンロードする。
+   - Working Copy や a-Shell などの Git アプリでクローンするか、
+   - GitHub の「Code → Download ZIP」から保存して「ファイル」App で展開する。
+3. `GitHubViewer.swiftpm` を **Swift Playgrounds で開く** (タップするだけで開きます)。
+4. 右上の ▶︎ で実行。
+5. アドレス欄に GitHub の URL を入れて「開く」。
+
+Mac の Xcode で開く場合も `GitHubViewer.swiftpm` をそのまま開けます (iOS シミュレータ / iPad 実機向け)。
+
+動作確認にはこのリポジトリの例が使えます。
+
+```
+https://github.com/prak59459-create/swift-html-viewer/tree/main/Examples
+```
+
+| 例 | 実行方法 |
+| --- | --- |
+| `Examples/demo.html` | WebView でそのまま実行 (JavaScript も動く) |
+| `Examples/demo.py` | Pyodide (端末内) |
+| `Examples/demo.sql` | sql.js / SQLite (端末内) |
+| `Examples/demo.c` | **内蔵 C コンパイラ** (端末内、設定不要) |
+| `Examples/c/*.c` | 内蔵 C コンパイラ (GCC と出力を突き合わせた 40 本) |
+| `Examples/php/*.php` | 内蔵 PHP インタプリタ (PHP 8.4 と出力を突き合わせた 16 本) |
+| `Examples/swift/*.swift` | 内蔵 Swift インタプリタ (swiftc 6.0.3 と出力を突き合わせた 14 本) |
+| `Examples/<言語>/basics.*` | 26 言語それぞれの内蔵処理系 (Java・C++・Go・Rust・Perl・Shell などは本物と一致を確認) |
+
+## できること
+
+- **URL を貼るだけ** — `https://github.com/owner/repo/blob/main/index.html` のようなページ URL をそのまま入力できます。
+- **HTML / SVG をその場で実行** — WKWebView で描画するので CSS も JavaScript も動きます。
+- **30 以上の言語をその場で実行** — 拡張子から言語を判定し、内蔵の処理系・WebView のランタイム・実行サービスのいずれかで動かします (下表)。内蔵の処理系はネットワークを使いません。
+- **Markdown を整形表示 / ソース・画像表示** — README は GitHub 風に、画像はそのまま表示します。
+- **表示方法の切り替え** — 「自動 / HTML として実行 / Markdown / ソース / 画像」を手動で選べます。
+- **その場で編集して再実行** — 「編集」でソースを書き換え、「実行」(⌘R) で反映されます。
+- **出力ペイン** — 標準出力・標準エラー・コンパイルエラー・`console.log` をまとめて表示します。
+- **リポジトリを辿れる** — ディレクトリを開くとサイドバーにファイル一覧が出て、README は自動で開きます。
+
+### 対応している入力形式
+
+| 入力 | 動作 |
+| --- | --- |
+| `https://github.com/owner/repo` | デフォルトブランチのルートを一覧表示 |
+| `https://github.com/owner/repo/blob/main/docs/index.html` | そのファイルを表示・実行 |
+| `https://github.com/owner/repo/tree/main/docs` | そのフォルダを一覧表示 |
+| `https://raw.githubusercontent.com/owner/repo/main/index.html` | そのファイルを表示・実行 |
+| `https://gist.github.com/user/<gist id>` | Gist を表示 (複数ファイルなら一覧) |
+| `owner/repo` / `owner/repo/path/to/file` | 省略形 |
+| その他の `http(s)` URL | そのまま取得して表示 |
+
+## 対応言語と実行方法
+
+iPadOS ではネイティブのコンパイラを同梱できない (実行時のコード生成が許可されていない) ため、
+すべて **自作の処理系 (インタプリタ / バイトコード仮想マシン)** で動かします。
+ネットワークが要るのは、Python や Ruby のように WebAssembly のランタイムを読み込む言語だけです。
+
+### 1. 内蔵の処理系で実行 — ネットワークすら使いません
+
+独立した実装:
+
+| 言語 | 実装 |
+| --- | --- |
+| C | 自作のコンパイラ + バイトコード仮想マシン ([docs/MiniC.md](docs/MiniC.md)) |
+| PHP | 自作のインタプリタ ([docs/MiniPHP.md](docs/MiniPHP.md)) |
+| Swift | 自作のインタプリタ ([docs/MiniSwift.md](docs/MiniSwift.md)) |
+
+共通基盤 ([docs/MiniLang.md](docs/MiniLang.md)) の上に作った処理系:
+
+| 系統 | 言語 |
+| --- | --- |
+| C 系 | C++ / Objective-C / Java / C# / Kotlin / Scala / Go / Rust / D / Zig / Dart / Groovy / JavaScript / TypeScript |
+| スクリプト系 | Perl / R / Julia / Crystal / Nim / シェル (bash 風) |
+| 手続き型 | Pascal |
+| 関数型 | Haskell / OCaml / Elixir / Erlang / Lisp |
+
+各言語の対応範囲は「基本のプログラムが素直に動く」ところまでで、
+`Examples/<言語>/basics.*` がそのまま動く範囲を示しています。
+
+**C** は C99 の実用的な部分をほぼ網羅しています (構造体・共用体・ポインタ・多次元配列・関数ポインタ・
+`goto`・可変長引数・`static` ローカル・構造体の値返し・`malloc`・`printf`・`qsort` など)。
+ツールバーの「逆アセンブル」で、生成されたバイトコードも読めます。
+
+**PHP** は変数・配列 (順序つき連想配列)・関数・クロージャ・クラスと継承・`foreach`・文字列の変数展開・
+インライン HTML (`<?php ... ?>` と `<?= ?>`) に対応し、標準関数を 150 以上用意しています。
+HTML を出力する PHP は、その結果をそのままページとして表示します。
+
+**Swift** は `let`/`var`・構造体 (値型)・クラス (参照型)・列挙型・オプショナル・`guard let`・
+`switch`・クロージャ (参照キャプチャ)・高階関数・`inout`・タプルなどに対応しています。
+
+どちらもコンパイル・構文エラーは行と桁つきで、実行時エラー (NULL 参照、0 除算、無限ループ、深すぎる再帰) も
+安全に止めて報告します。
+
+### 2. WebView のランタイムで実行 — コードは外に出ません
+
+WebView に WebAssembly / JavaScript 実装のランタイムを読み込んで実行します (読み込みのためのネットワークは必要)。
+
+| 言語 | ランタイム |
+| --- | --- |
+| JavaScript | WebView そのまま |
+| TypeScript | TypeScript コンパイラでトランスパイルしてから実行 |
+| Python | Pyodide (CPython の WebAssembly ビルド) |
+| Ruby | ruby.wasm |
+| Lua | Fengari |
+| SQL | sql.js (SQLite の WebAssembly ビルド) |
+
+### 3. 実行サービスでコンパイル・実行 — 設定で許可したときだけ
+
+内蔵の処理系で足りないとき (本物の標準ライブラリを使いたいときなど) の逃げ道として残してあります。
+設定で「内蔵処理系を優先」を外すと、同じ言語をサーバーで実行できます。
+
+- 既定は **Wandbox** (`https://wandbox.org/api`) で、登録不要で使えます。
+- **Piston** も選べます。公開インスタンス (`emkc.org`) は 2026 年 2 月からホワイトリスト制なので、[自分で立てた Piston](https://github.com/engineer-man/piston) の URL を設定で指定してください。
+- どちらも **ソースコードを外部サービスに送信します**。設定の「サーバーでのコンパイル・実行を許可」を ON にしたときだけ動きます (既定は OFF)。
+- 実行サービス側の障害やメンテナンスで失敗することがあります。そのときは出力ペインにサービスからのエラーがそのまま出ます。
+
+言語は拡張子から自動判定しますが、ツールバーのメニューで手動指定もできます (例: 拡張子なしのファイルを Python として実行)。
+
+### アクセストークン (任意)
+
+未設定でも公開リポジトリは読めますが、GitHub API の未認証レート制限は 1 時間あたり 60 回です。設定画面でトークンを入れると制限が緩和され、プライベートリポジトリも開けます。
+
+## 構成
+
+```
+GitHubViewer.swiftpm/        ← Swift Playgrounds で開く App Project
+  Package.swift              iOS アプリとしての定義 (.iOSApplication)
+  App/                       画面まわり (SwiftUI + WebKit, iPadOS / iOS 専用)
+    GitHubViewerApp.swift      エントリポイント
+    ContentView.swift          メイン画面と出力ペイン
+    SettingsView.swift         トークン / 実行サービスの設定
+    ViewerModel.swift          状態管理
+    WebView.swift              WKWebView ラッパー (console ブリッジ付き)
+  Core/                      ロジック (UI 非依存)
+    MiniLang/                  26 言語ぶんの処理系を支える共通基盤
+      MLValue.swift              値モデル (整数・配列・辞書・オブジェクト・関数)
+      MLIR.swift                 共通の中間表現 (式・文・パターン・宣言)
+      MLInterpreter.swift        評価器 (スコープ・呼び出し・パターン照合)
+      MLSemantics.swift          言語ごとの味付けを差し込む口
+      MLStdlib.swift             共通の標準ライブラリ
+      MLLanguageProfile.swift    「言語の見た目」を表にしたもの + 汎用の字句解析
+      MLProfileParser.swift      中括弧の言語のための汎用構文解析
+      MLEndBlockParser.swift     `end` で閉じる言語 (Julia / Crystal / Elixir / Pascal)
+      MLIndentParser.swift       字下げでまとまる言語 (Nim / Haskell)
+      MiniLangRegistry.swift     言語 ID → 処理系の対応表
+    MiniJava/ MiniCpp/ …       言語ごとの字句解析・構文解析・意味論・標準ライブラリ
+    MiniSwift/                 自作の Swift インタプリタ
+      SwiftLexer.swift           字句解析 (文字列補間も)
+      SwiftParser.swift          構文解析
+      SwiftAST.swift             構文木
+      SwiftValue.swift           値と表示 (Swift と同じ print の書式)
+      SwiftOperations.swift      演算子
+      SwiftInterpreter.swift     実行 (スコープ・型・クロージャ)
+      SwiftBuiltins.swift        標準ライブラリ
+      MiniSwift.swift            窓口
+    MiniPHP/                   自作の PHP インタプリタ
+      PHPLexer.swift             字句解析 (インライン HTML も)
+      PHPParser.swift            構文解析
+      PHPAST.swift               構文木
+      PHPValue.swift             値と順序つき配列・型変換
+      PHPOperations.swift        演算子の意味 (型ジャグリング)
+      PHPInterpreter.swift       実行 (スコープ・クラス・クロージャ)
+      PHPBuiltins.swift          標準関数
+      PHPFormatter.swift         sprintf / var_dump / print_r / json_encode
+      MiniPHP.swift              窓口
+    MiniC/                     自作の C コンパイラと仮想マシン
+      Lexer.swift                字句解析
+      Preprocessor.swift         #define / #ifdef
+      Parser.swift               構文解析 (再帰下降)
+      AST.swift / CType.swift    構文木と型
+      Compiler.swift             型検査 + バイトコード生成
+      Bytecode.swift             命令セットと逆アセンブラ
+      VM.swift                   スタックマシン (メモリ・malloc・実行制限)
+      Builtins.swift             printf などの標準ライブラリ
+      Diagnostics.swift          エラー表示 (行・桁・キャレット)
+      MiniC.swift                窓口 (compile / execute / disassemble)
+    GitHubTarget.swift         URL 解析 (github.com / raw / gist / 省略形)
+    GitHubClient.swift         GitHub REST API からの取得
+    ContentKind.swift          拡張子と中身からの表示種別判定
+    LanguageCatalog.swift      言語カタログと実行方法の決定
+    SandboxPageBuilder.swift   端末内実行用の HTML ページ生成
+    CodeRunner.swift           実行サービス (Wandbox / Piston) クライアント
+    MarkdownRenderer.swift     Markdown → HTML 変換
+    HTMLDocumentBuilder.swift  WebView に渡す HTML の組み立て
+    DisplayMode.swift          表示モード
+    HTTP.swift                 URLSession の薄いラッパー
+Package.swift                ← Core を macOS / Linux でテストするためのマニフェスト
+Tests/GitHubViewerCoreTests/ Core のテスト (152 件)
+Examples/                    動作確認用のサンプル
+  c/                         C のサンプル 40 本 + GCC で作った期待出力
+  php/                       PHP のサンプル 16 本 + PHP 8.4 で作った期待出力
+  swift/                     Swift のサンプル 14 本 + swiftc で作った期待出力
+  java/ cpp/ go/ rust/ …     26 言語ぶんのサンプルと期待出力
+docs/MiniC.md                内蔵 C コンパイラの説明
+docs/MiniPHP.md              内蔵 PHP インタプリタの説明
+docs/MiniSwift.md            内蔵 Swift インタプリタの説明
+docs/MiniLang.md             26 言語ぶんの処理系を支える共通基盤の説明
+```
+
+`Core` は Foundation だけに依存しているので、Mac や Linux でテストできます。
+
+```bash
+swift test    # 152 tests
+```
+
+テストには **本物の処理系との差分テスト**が含まれます。`Examples/c/` の 40 本、`Examples/php/` の 16 本、
+`Examples/swift/` の 14 本を内蔵の処理系で実行し、同じソースを `gcc -std=c99` / `php` 8.4 /
+`swiftc` 6.0.3 で実行した出力と 1 バイトも違わないことを確認しています。
+
+26 言語ぶんの `Examples/<言語>/basics.*` も同じ仕組みで突き合わせています。
+本物の処理系が手に入るもの (Java・C++・Go・Rust・JavaScript・TypeScript・Perl・シェル) は
+その出力をそのまま期待値にしていて、手に入らないものは内蔵処理系の出力を固定して
+後戻りしないようにしています。
+
+開発用に、内蔵の処理系をコマンドラインから動かせます。
+
+```bash
+swift run minilang --list          # 使える言語 ID の一覧
+swift run minilang rust main.rs    # 内蔵 Rust 処理系で実行
+```
+
+## 注意
+
+- 開いた HTML / JavaScript はアプリ内の WebView で **実行されます**。信頼できないコードを実行しないでください。
+- 内蔵 C コンパイラはネットワークを使いませんが、Pyodide などの WebView ランタイムは CDN (jsdelivr) から読み込むため、初回はダウンロードに時間がかかります (Ruby は約 16MB、Python は数十 MB)。
+- 内蔵 C コンパイラが対応していない機能 (ビットフィールド、VLA、ファイル入出力など) は [docs/MiniC.md](docs/MiniC.md) にまとめてあります。
+- ブランチ名にスラッシュを含む URL (`blob/feature/foo/index.html` など) は、先頭の 1 要素をブランチ名として扱います。
+- 1MB を超えるファイルは API が中身を返さないため、`raw.githubusercontent.com` から取得し直します。
