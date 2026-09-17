@@ -133,6 +133,11 @@ open class MLSemantics {
         .int(value)
     }
 
+    /// `main(args)` の args にプログラム名も含める言語 (C / C++ / Go など)。
+    ///
+    /// Java や C# の `main(String[] args)` は含めないので false のまま。
+    open var entryArgumentsIncludeProgramName: Bool { false }
+
     // MARK: メンバー
 
     /// `obj.method` と書くだけで引数なし呼び出しになる言語 (Ruby / Crystal)。

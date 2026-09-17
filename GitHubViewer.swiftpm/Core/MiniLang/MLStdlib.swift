@@ -54,6 +54,103 @@ public enum MLStdlib {
         environment.define("exit", .function(.native("exit", 0...1) { context in
             throw MLError.exit(Int32(truncatingIfNeeded: context.argument(0).asInt ?? 0))
         }))
+
+    }
+
+    /// どの言語でも使える下働き (引数・仮想ファイル・標準入力・exit)。
+    ///
+    /// 言語ごとの標準ライブラリより先に入れるので、同じ名前があれば言語側が勝つ。
+    public static func installRuntimeServices(into environment: MLEnvironment,
+                                              interpreter: MLInterpreter) {
+        installArguments(into: environment, interpreter: interpreter)
+        installFileAccess(into: environment)
+        installBasicInput(into: environment)
+    }
+
+    /// どの言語からでも標準入力を読めるようにしておく。
+    public static func installBasicInput(into environment: MLEnvironment) {
+        environment.define("readLine", .function(.native("readLine", 0) { context in
+            guard let line = context.interpreter.input.nextLine() else { return .unit }
+            return .string(line)
+        }))
+
+        environment.define("readAllInput",
+                           .function(.native("readAllInput", 0) { context in
+            .string(context.interpreter.input.remainingText)
+        }))
+
+        environment.define("exit", .function(.native("exit", 0...1) { context in
+            throw MLError.exit(Int32(truncatingIfNeeded: context.argument(0).asInt ?? 0))
+        }))
+    }
+
+    /// コマンドライン引数を大域に置く。
+    ///
+    /// 言語ごとの名前 (`os.Args`, `process.argv` など) はそれぞれの標準ライブラリで
+    /// 足すが、どの言語でも `ARGV` と `__argv` で読めるようにしておく。
+    public static func installArguments(into environment: MLEnvironment,
+                                        interpreter: MLInterpreter) {
+        let limits = interpreter.limits
+        environment.define("ARGV", .array(MLArray(limits.arguments.map {
+            MLValue.string($0)
+        })), isConstant: true)
+        environment.define("__argv", .array(MLArray(limits.argv.map {
+            MLValue.string($0)
+        })), isConstant: true)
+        environment.define("__program_name", .string(limits.programName),
+                           isConstant: true)
+    }
+
+    /// 仮想ファイルへの読み書き。本物のファイルには触らない。
+    public static func installFileAccess(into environment: MLEnvironment) {
+        environment.define("readFile", .function(.native("readFile", 1) { context in
+            let path = try context.requireString(0, "readFile")
+            guard let text = context.interpreter.files.read(path) else {
+                throw MLError.runtime("readFile: ファイルがありません: \(path)")
+            }
+            return .string(text)
+        }))
+
+        environment.define("readLines", .function(.native("readLines", 1) { context in
+            let path = try context.requireString(0, "readLines")
+            guard let lines = context.interpreter.files.lines(at: path) else {
+                throw MLError.runtime("readLines: ファイルがありません: \(path)")
+            }
+            return .array(MLArray(lines.map { MLValue.string($0) }))
+        }))
+
+        environment.define("writeFile", .function(.native("writeFile", 2) { context in
+            let path = try context.requireString(0, "writeFile")
+            let text = context.interpreter.semantics.stringify(context.argument(1))
+            guard context.interpreter.files.write(text, to: path) else {
+                throw MLError.limitExceeded("writeFile: 書き込める大きさを超えました。")
+            }
+            context.interpreter.countAllocation(text.utf8.count / 48 + 1)
+            return .unit
+        }))
+
+        environment.define("appendFile", .function(.native("appendFile", 2) { context in
+            let path = try context.requireString(0, "appendFile")
+            let text = context.interpreter.semantics.stringify(context.argument(1))
+            guard context.interpreter.files.append(text, to: path) else {
+                throw MLError.limitExceeded("appendFile: 書き込める大きさを超えました。")
+            }
+            return .unit
+        }))
+
+        environment.define("fileExists", .function(.native("fileExists", 1) { context in
+            .bool(context.interpreter.files.exists(try context.requireString(0,
+                                                                            "fileExists")))
+        }))
+
+        environment.define("removeFile", .function(.native("removeFile", 1) { context in
+            .bool(context.interpreter.files.remove(try context.requireString(0,
+                                                                            "removeFile")))
+        }))
+
+        environment.define("listFiles", .function(.native("listFiles", 0) { context in
+            .array(MLArray(context.interpreter.files.fileNames.map { MLValue.string($0) }))
+        }))
     }
 
     static let mathFunctions: [(String, (Double) -> Double)] = [

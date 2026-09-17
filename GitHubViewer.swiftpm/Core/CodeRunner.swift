@@ -4,7 +4,7 @@ import FoundationNetworking
 #endif
 
 /// サーバー実行 (コンパイル + 実行) の結果。
-public struct ExecutionOutput: Equatable {
+public struct ExecutionOutput: Equatable, Sendable {
     public var languageVersion: String
     public var compileOutput: String
     public var stdout: String

@@ -189,7 +189,9 @@ enum JavaLibrary {
                 .double(Foundation.pow(try context.requireDouble(0, "Math.pow"),
                                        try context.requireDouble(1, "Math.pow")))
             }),
-            ("random", function("random", 0...0) { _ in .double(Double.random(in: 0..<1)) }),
+            ("random", function("random", 0...0) { context in
+                .double(context.interpreter.random.double())
+            }),
             ("round", function("round", 1) { context in
                 let value = try context.requireDouble(0, "Math.round")
                 return .int(Int64((value).rounded(.toNearestOrAwayFromZero)))

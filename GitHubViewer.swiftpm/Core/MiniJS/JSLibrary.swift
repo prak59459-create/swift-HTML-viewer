@@ -522,7 +522,9 @@ enum JSLibrary {
                 .double(Foundation.pow(try context.requireDouble(0, "Math.pow"),
                                        try context.requireDouble(1, "Math.pow")))
             }),
-            ("random", function("random", 0...0) { _ in .double(Double.random(in: 0..<1)) }),
+            ("random", function("random", 0...0) { context in
+                .double(context.interpreter.random.double())
+            }),
             ("floor", function("floor", 1) { context in
                 .int(Int64(Foundation.floor(try context.requireDouble(0, "Math.floor"))))
             }),

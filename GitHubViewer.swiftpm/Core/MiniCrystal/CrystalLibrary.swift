@@ -213,9 +213,9 @@ enum CrystalLibrary {
         }
         define("rand", 0...1) { context in
             if let limit = context.optionalArgument(0)?.asInt, limit > 0 {
-                return .int(Int64.random(in: 0..<limit))
+                return .int(context.interpreter.random.int(in: 0...(limit - 1)))
             }
-            return .double(Double.random(in: 0..<1))
+            return .double(context.interpreter.random.double())
         }
         define("typeof", 1...1) { context in
             .string(semantics.typeName(of: context.argument(0)))

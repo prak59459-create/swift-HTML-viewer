@@ -20,6 +20,20 @@ public final class MLInterpreter {
     public var exitCode: Int32 = 0
     /// 言語フロントエンドが自由に使える置き場。
     public var userInfo: [String: Any] = [:]
+    /// 乱数。`limits.randomSeed` を決めておけば毎回同じ並びになる。
+    public let random: MLRandom
+    /// プログラムから読み書きできる仮想のファイル。
+    public let files: VirtualFileSystem
+    /// 実行を打ち切る時刻 (`limits.timeLimit` から決まる)。
+    private var deadline: Date?
+    /// 止められた / 時間切れになったか。
+    public private(set) var wasCancelled = false
+    public private(set) var timedOut = false
+    /// 作った配列・辞書・インスタンスのおおよその数 (メモリの目安)。
+    public private(set) var allocationCount = 0
+
+    /// これまでに進んだステップ数。
+    public var steps: Int { stepCount }
 
     public init(semantics: MLSemantics, limits: MiniLangLimits = .default, input: String = "") {
         self.semantics = semantics
@@ -27,11 +41,38 @@ public final class MLInterpreter {
         self.output = MiniLangOutput(limit: limits.maximumOutputBytes)
         self.input = MiniLangInput(input)
         self.globals = MLEnvironment(isFunctionScope: true)
+        self.random = MLRandom(seed: limits.randomSeed)
+        self.files = limits.fileSystem ?? VirtualFileSystem()
+        // 対話的に動かしているときは、出力と入力を呼び出し元につなぐ。
+        if let hooks = limits.hooks {
+            if let onOutput = hooks.onOutput { self.output.onWrite = onOutput }
+            if let provideInput = hooks.provideInput { self.input.provider = provideInput }
+        }
+    }
+
+    /// 作ったものを数える (メモリの目安に使う)。
+    @inline(__always)
+    public func countAllocation(_ amount: Int = 1) {
+        allocationCount += amount
+    }
+
+    /// おおよそのメモリ使用量。出力と、作った入れ物の数から見積もる。
+    public var approximateMemoryBytes: Int {
+        output.byteCount + allocationCount * 48
     }
 
     // MARK: - 実行の入口
 
     public func run(_ program: MLProgram) -> MiniLangExecution {
+        if let limit = limits.timeLimit {
+            deadline = Date().addingTimeInterval(limit)
+        }
+        // 構文を調べるだけなら、ここまで来た時点で通っている。
+        if limits.parseOnly { return MiniLangExecution(parsed: true) }
+        // 言語によらず使えるもの (引数と仮想ファイル) を先に置く。
+        // そのあとで言語ごとの標準ライブラリを入れるので、同じ名前があれば
+        // 言語側が勝つ。
+        MLStdlib.installRuntimeServices(into: globals, interpreter: self)
         semantics.installBuiltins(into: globals, interpreter: self)
         do {
             try semantics.prepare(program: program, interpreter: self)
@@ -41,40 +82,55 @@ public final class MLInterpreter {
                 try callEntryPoint(name: entry.name, typeName: entry.typeName)
             }
             semantics.finish(interpreter: self)
-            return MiniLangExecution(parsed: true, output: output.text, exitCode: exitCode)
+            return finished(exitCode: exitCode)
         } catch let error as MLError {
             if case .exit(let code) = error {
                 semantics.finish(interpreter: self)
-                return MiniLangExecution(parsed: true, output: output.text, exitCode: code)
+                return finished(exitCode: code)
             }
             semantics.finish(interpreter: self)
-            return MiniLangExecution(parsed: true, output: output.text,
-                                     runtimeError: error.message, exitCode: 1)
+            return finished(exitCode: 1, runtimeError: error.message)
         } catch let control as MLControl {
             semantics.finish(interpreter: self)
             if case .returnValue(let value) = control {
                 let code = value.asInt.map { Int32(truncatingIfNeeded: $0) } ?? 0
-                return MiniLangExecution(parsed: true, output: output.text, exitCode: code)
+                return finished(exitCode: code)
             }
-            return MiniLangExecution(parsed: true, output: output.text,
-                                     runtimeError: "ループの外で break / continue が使われました",
-                                     exitCode: 1)
+            return finished(exitCode: 1,
+                            runtimeError: "ループの外で break / continue が使われました")
         } catch {
             semantics.finish(interpreter: self)
-            return MiniLangExecution(parsed: true, output: output.text,
-                                     runtimeError: "内部エラー: \(error)", exitCode: 1)
+            return finished(exitCode: 1, runtimeError: "内部エラー: \(error)")
         }
+    }
+
+    /// 実行結果に、ステップ数などの測った値を添えて返す。
+    private func finished(exitCode: Int32, runtimeError: String? = nil)
+        -> MiniLangExecution {
+        MiniLangExecution(parsed: true, output: output.text, runtimeError: runtimeError,
+                          exitCode: exitCode, steps: stepCount,
+                          approximateMemoryBytes: approximateMemoryBytes,
+                          wasCancelled: wasCancelled, timedOut: timedOut)
     }
 
     /// 開始点に渡す引数。`main()` / `main(args)` / `main(argc, argv)` の
     /// どの形でも動くように、受け取る個数に合わせて用意する。
+    ///
+    /// Java や C# のように `main(String[] args)` がプログラム名を含まない言語と、
+    /// C のように `argv[0]` がプログラム名になる言語があるので、
+    /// `MLSemantics.entryArgumentsIncludeProgramName` で選び分ける。
     private func entryArguments(count: Int) -> [MLValue] {
+        let withName = limits.argv
+        let withoutName = limits.arguments
+        let list = semantics.entryArgumentsIncludeProgramName ? withName : withoutName
+        let array = MLValue.array(MLArray(list.map { MLValue.string($0) }))
         switch count {
         case 0: return []
-        case 1: return [.array(MLArray([.string("program")]))]
+        case 1: return [array]
         default:
-            return [.int(1), .array(MLArray([.string("program")]))]
-                + Array(repeating: .unit, count: Swift.max(0, count - 2))
+            return [.int(Int64(withName.count)), .array(MLArray(withName.map {
+                MLValue.string($0)
+            }))] + Array(repeating: .unit, count: Swift.max(0, count - 2))
         }
     }
 
@@ -133,6 +189,22 @@ public final class MLInterpreter {
         if stepCount > limits.maximumSteps {
             throw MLError.limitExceeded(
                 "実行ステップが上限 (\(limits.maximumSteps)) を超えました。無限ループかもしれません。")
+        }
+        // 時計を見るのは重いので、ときどきだけ確かめる。
+        if stepCount & 0x3FF == 0 { try checkClockAndCancellation() }
+    }
+
+    /// 時間切れと中断の見張り。
+    private func checkClockAndCancellation() throws {
+        if limits.cancellation?.isCancelled == true {
+            wasCancelled = true
+            throw MLError.limitExceeded("実行を中断しました。")
+        }
+        guard let limit = limits.timeLimit, let deadline else { return }
+        if Date() >= deadline {
+            timedOut = true
+            throw MLError.limitExceeded(
+                String(format: "実行時間が上限 (%.1f 秒) を超えました。", limit))
         }
     }
 
