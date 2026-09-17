@@ -136,8 +136,28 @@ public final class MLInterpreter {
         }
     }
 
+    /// 出力を横取りする入れ物 (コマンド置換やパイプで使う)。
+    private var captureStack: [String] = []
+
     public func write(_ text: String) {
+        if !captureStack.isEmpty {
+            captureStack[captureStack.count - 1] += text
+            return
+        }
         output.write(text)
+    }
+
+    /// 本体の出力を画面に出さず、文字列として受け取る。
+    public func capturingOutput(_ body: () throws -> Void) rethrows -> String {
+        captureStack.append("")
+        defer { if !captureStack.isEmpty { captureStack.removeLast() } }
+        do {
+            try body()
+        } catch {
+            if let text = captureStack.last { _ = text }
+            throw error
+        }
+        return captureStack.last ?? ""
     }
 
     // MARK: - 宣言の先読み
