@@ -7,6 +7,52 @@ final class NimSemantics: MLSemantics {
     override var integerDivisionTruncatesTowardZero: Bool { true }
     /// `x.len` や `xs.add(1)` を `len(x)` / `add(xs, 1)` として解く。
     override var usesUniformFunctionCall: Bool { true }
+    /// 同じ名前の手続きを引数の型で選び分ける。
+    override var selectsOverloadsByParameterType: Bool { true }
+    /// `Green` のように型名を書かずに列挙のケースを使える。
+    override var exposesEnumCasesGlobally: Bool { true }
+
+    /// 実引数が宣言の型に当てはまるか。知らない型名なら通す。
+    override func value(_ value: MLValue, matchesDeclaredType typeName: String,
+                        interpreter: MLInterpreter) -> Bool {
+        switch typeName {
+        case "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16",
+             "uint32", "uint64", "byte", "Natural", "Positive":
+            return value.asInt != nil && !isDouble(value)
+        case "float", "float32", "float64":
+            return isDouble(value) || value.asInt != nil
+        case "string":
+            if case .string = value.forced { return true }
+            return false
+        case "char":
+            if case .char = value.forced { return true }
+            return false
+        case "bool":
+            if case .bool = value.forced { return true }
+            return false
+        case "seq", "array", "openArray", "varargs":
+            return value.asArray != nil
+        case "Table", "OrderedTable", "CountTable":
+            return value.asMap != nil
+        case "auto", "typed", "untyped", "any", "T":
+            return true
+        default:
+            // 利用者が宣言した型は、継承をたどって確かめる。
+            guard let klass = interpreter.lookupClass(typeName) else { return true }
+            guard let object = value.asObject else { return false }
+            var current = object.classDeclaration
+            while let candidate = current {
+                if candidate.name == klass.name { return true }
+                current = candidate.superclass
+            }
+            return false
+        }
+    }
+
+    private func isDouble(_ value: MLValue) -> Bool {
+        if case .double = value.forced { return true }
+        return false
+    }
 
     override func isTruthy(_ value: MLValue) throws -> Bool {
         guard case .bool(let flag) = value.forced else { return !value.isUnit }
@@ -177,6 +223,7 @@ enum NimLibrary {
 
     static func install(into environment: MLEnvironment, semantics: NimSemantics,
                         interpreter: MLInterpreter) {
+        MLStdlib.installCommon(into: environment, interpreter: interpreter)
         environment.define("echo", function("echo", 0...64) { context in
             let text = context.arguments.map { semantics.display($0) }.joined()
             context.interpreter.write(text + "\n")

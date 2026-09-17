@@ -142,9 +142,20 @@ final class NimParser: MLIndentParser {
     /// `method f(x: Circle)` を Circle のメソッドとして型宣言に入れ直す。
     private func attachMethods(to statements: [MLStmt]) -> [MLStmt] {
         guard !pendingMethods.isEmpty else { return statements }
-        var result: [MLStmt] = []
         var dispatchers: Set<String> = []
+        let result = rewrite(statements, dispatchers: &dispatchers)
+        return result + makeDispatchers(dispatchers)
+    }
+
+    /// 型宣言を探して `method` を入れ直す (`type` 節は block に包まれている)。
+    private func rewrite(_ statements: [MLStmt],
+                         dispatchers: inout Set<String>) -> [MLStmt] {
+        var result: [MLStmt] = []
         for statement in statements {
+            if case .block(let inner, let location) = statement {
+                result.append(.block(rewrite(inner, dispatchers: &dispatchers), location))
+                continue
+            }
             guard case .typeDecl(let decl) = statement,
                   let methods = pendingMethods[decl.name] else {
                 result.append(statement)
@@ -164,7 +175,12 @@ final class NimParser: MLIndentParser {
                                                location: decl.location)))
             for method in methods { dispatchers.insert(method.name) }
         }
-        // `area(shape)` のように関数として呼んでも動くよう、振り分け役を足す。
+        return result
+    }
+
+    /// `area(shape)` のように関数として呼んでも動くよう、振り分け役を足す。
+    private func makeDispatchers(_ dispatchers: Set<String>) -> [MLStmt] {
+        var result: [MLStmt] = []
         for name in dispatchers.sorted() {
             let location = SourceLocation.unknown
             let call = MLExpr.call(callee: .member(.name("#receiver", location), name,
@@ -410,10 +426,13 @@ final class NimParser: MLIndentParser {
         // `method` は第 1 引数の型に付け直して動的に選べるようにする。
         if keyword == "method", let first = parameters.first, let owner = first.typeName,
            declaredTypes.contains(owner) {
+            // 第 1 引数の名前を self の別名として束ねる。
+            let bind = MLStmt.varDecl(pattern: .binding(first.name), typeName: nil,
+                                      value: .selfRef(location), isConstant: true, location)
             let methodDecl = MLFunctionDecl(
                 name: name,
                 parameters: Array(parameters.dropFirst()),
-                body: body.map { rename(first.name, to: "self", in: $0) },
+                body: [bind] + body,
                 returnTypeName: returnTypeName, location: location)
             pendingMethods[owner, default: []].append(methodDecl)
             return .noop(location)
@@ -447,13 +466,6 @@ final class NimParser: MLIndentParser {
             MLParameter(name: $0, typeName: typeName, defaultValue: defaultValue,
                         isVariadic: isVariadic, isByReference: isByReference)
         }
-    }
-
-    /// 文の中の変数名を置き換える (`method` の第 1 引数を self にする)。
-    private func rename(_ from: String, to: String, in statement: MLStmt) -> MLStmt {
-        // 本体をそのまま使い、呼び出し時に別名も束ねる方が安全なので、
-        // ここでは元の名前を self の別名として先頭に足す。
-        statement
     }
 
     // MARK: 型の節
@@ -690,11 +702,6 @@ final class NimParser: MLIndentParser {
 
     override func parseUnary(stopAtBrace: Bool) throws -> MLExpr {
         let location = current.location
-        // `@[1, 2, 3]` は seq リテラル。
-        if check("@"), peek(1).is("[") {
-            advance()
-            return try parseListOrMapLiteral()
-        }
         // `$x` は文字列化。
         if check("$") {
             advance()
@@ -707,6 +714,17 @@ final class NimParser: MLIndentParser {
 
     override func parsePrimary(stopAtBrace: Bool) throws -> MLExpr {
         let location = current.location
+        // `@[1, 2, 3]` は seq リテラル。
+        if check("@"), peek(1).is("[") {
+            advance()
+            return try parseListOrMapLiteral()
+        }
+        // `initTable[string, int]()` の `[...]` は型引数なので読み飛ばす。
+        if current.kind == .identifier, peek(1).is("["), looksLikeGenericCall() {
+            let name = advance().text
+            skipBalanced(open: "[", close: "]")
+            return .name(name, location)
+        }
         if check("if") { return try parseIfExpression() }
         if check("case") {
             let statement = try parseNimCase()
@@ -735,6 +753,24 @@ final class NimParser: MLIndentParser {
                            location)
         }
         return try super.parsePrimary(stopAtBrace: stopAtBrace)
+    }
+
+    /// `f[T](x)` の形か (閉じ括弧のすぐ後ろが `(` なら型引数とみなす)。
+    private func looksLikeGenericCall() -> Bool {
+        var cursor = index + 1
+        var depth = 0
+        while cursor < tokens.count {
+            let text = tokens[cursor].text
+            if text == "[" { depth += 1 }
+            if text == "]" {
+                depth -= 1
+                if depth == 0 {
+                    return cursor + 1 < tokens.count && tokens[cursor + 1].is("(")
+                }
+            }
+            cursor += 1
+        }
+        return false
     }
 
     /// 最後の式をそのまま戻り値にする。

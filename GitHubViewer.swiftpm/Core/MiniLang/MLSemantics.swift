@@ -139,6 +139,18 @@ open class MLSemantics {
     /// `x.f(y)` を `f(x, y)` と読み替える言語 (Nim / D の UFCS)。
     open var usesUniformFunctionCall: Bool { false }
 
+    /// 引数の型で多重定義を選ぶ言語 (Nim / C++ のオーバーロード)。
+    open var selectsOverloadsByParameterType: Bool { false }
+
+    /// 列挙のケースを型名なしでも書ける言語 (Nim / Pascal / C の enum)。
+    open var exposesEnumCasesGlobally: Bool { false }
+
+    /// 実引数が宣言された型に当てはまるか。false を返すとその定義は選ばれない。
+    open func value(_ value: MLValue, matchesDeclaredType typeName: String,
+                    interpreter: MLInterpreter) -> Bool {
+        true
+    }
+
     /// `value.name` の読み出し。`nil` を返すと共通処理にまかせる。
     open func member(of value: MLValue, name: String,
                      interpreter: MLInterpreter) throws -> MLValue? {

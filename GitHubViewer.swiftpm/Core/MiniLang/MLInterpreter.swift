@@ -269,9 +269,16 @@ public final class MLInterpreter {
                     object.attachment = try evaluate(raw, in: scope)
                 }
                 klass.staticStorage.define(name, .object(object), isConstant: true)
+                // `Green` のように型名を書かずに使える言語もある。
+                if semantics.exposesEnumCasesGlobally, globals.lookupLocal(name) == nil {
+                    globals.define(name, .object(object), isConstant: true)
+                }
             }
         }
     }
+
+    /// 利用者の定義で隠れた組み込み関数 (多重定義の受け皿)。
+    var shadowedBuiltins: [String: MLFunction] = [:]
 
     public func defineFunction(_ decl: MLFunctionDecl, in environment: MLEnvironment) {
         // 同名の節が別々の文として来る言語 (Haskell / Erlang) では 1 つにまとめる。
@@ -281,6 +288,11 @@ public final class MLInterpreter {
            previous !== decl {
             previous.clauses.append(contentsOf: decl.clauses)
             return
+        }
+        if semantics.selectsOverloadsByParameterType,
+           let existing = environment.lookup(decl.name),
+           let native = existing.value.asFunction, case .native = native.body {
+            shadowedBuiltins[decl.name] = native
         }
         let function = MLFunction(body: .declared(decl), closure: environment)
         environment.define(decl.name, .function(function), isConstant: false)
@@ -1992,6 +2004,11 @@ public final class MLInterpreter {
             }
         }
         let name = declarations.first?.name ?? "関数"
+        // 組み込みを上書きした定義が合わなかったときは、元の組み込みに戻す。
+        if let fallback = shadowedBuiltins[name] {
+            return try callFunction(fallback, arguments: arguments, labels: labels,
+                                    boxes: boxes, location: location)
+        }
         throw MLError.runtime("\(location) \(name) に当てはまる定義がありません (引数 \(arguments.count) 個)")
     }
 
@@ -2066,6 +2083,11 @@ public final class MLInterpreter {
                 return false
             }
             guard var bound = value else { return false }
+            // 型で多重定義を選ぶ言語では、合わない定義をここで落とす。
+            if semantics.selectsOverloadsByParameterType, let typeName = parameter.typeName,
+               !semantics.value(bound, matchesDeclaredType: typeName, interpreter: self) {
+                return false
+            }
             bound = semantics.coerce(bound, toTypeName: parameter.typeName)
             if semantics.usesValueSemantics, !parameter.isByReference {
                 bound = copyForBinding(bound)
