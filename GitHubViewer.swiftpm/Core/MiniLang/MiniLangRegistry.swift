@@ -28,7 +28,8 @@ public enum MiniLangRegistry {
         MiniJulia.self,
         MiniCrystal.self,
         MiniNim.self,
-        MiniPascal.self
+        MiniPascal.self,
+        MiniPerl.self
     ]
 
     public static func engine(for languageID: String) -> MiniLangEngine.Type? {

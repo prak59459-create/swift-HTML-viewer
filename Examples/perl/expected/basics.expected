@@ -1,0 +1,24 @@
+fib: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34
+Hello, World!
+sorted: 1 3 5 7 9
+count: 5
+doubled: 10 6 18 2 14
+big: 5 9 7
+total: 25
+alice is 30
+bob is 25
+carol is 35
+upper: HELLO, PERL WORLD
+length: 17
+words: Hello|Perl|World
+matched Perl
+replaced: Hello, Perl Hackers
+i=0
+i=1
+i=2
+unless works
+pi is about 3.143
+17 % 5 = 2
+2 ** 10 = 1024
+concat: ab
+repeat: ----------
