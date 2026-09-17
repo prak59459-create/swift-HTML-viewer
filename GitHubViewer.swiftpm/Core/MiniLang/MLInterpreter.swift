@@ -282,6 +282,13 @@ public final class MLInterpreter {
         // 列挙の単純なケースは定数として引けるようにする。
         for name in klass.caseOrder {
             guard let enumCase = klass.cases[name] else { continue }
+            // 値を持つケースは構成子 (関数) として置く。
+            if !(enumCase.associatedTypes.isEmpty && enumCase.associatedNames.isEmpty),
+               semantics.exposesEnumCasesGlobally, globals.lookupLocal(name) == nil {
+                globals.define(name,
+                               .function(caseConstructor(klass: klass, enumCase: enumCase)),
+                               isConstant: true)
+            }
             if enumCase.associatedTypes.isEmpty && enumCase.associatedNames.isEmpty {
                 let object = MLObject(typeName: klass.name, classDeclaration: klass,
                                       caseName: name)
