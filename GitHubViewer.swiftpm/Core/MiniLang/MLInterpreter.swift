@@ -815,8 +815,15 @@ public final class MLInterpreter {
             }
             return box.value
 
-        case .defaultValue(let typeName, _):
-            return semantics.defaultValue(forTypeName: typeName)
+        case .defaultValue(let typeName, let location):
+            let value = semantics.defaultValue(forTypeName: typeName)
+            // レコード型は宣言しただけで実体ができる言語もある。
+            if value.isUnit, semantics.defaultInitializesDeclaredTypes,
+               let typeName, let klass = lookupClass(typeName),
+               klass.kind == .structType || klass.kind == .classType {
+                return try instantiate(klass, arguments: [], labels: [], location: location)
+            }
+            return value
 
         case .listLiteral(let items, let spreadIndices, _):
             var elements: [MLValue] = []

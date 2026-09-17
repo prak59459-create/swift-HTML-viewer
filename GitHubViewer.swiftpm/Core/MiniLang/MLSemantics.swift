@@ -145,6 +145,9 @@ open class MLSemantics {
     /// 列挙のケースを型名なしでも書ける言語 (Nim / Pascal / C の enum)。
     open var exposesEnumCasesGlobally: Bool { false }
 
+    /// `var P: TPoint;` だけで実体ができる言語 (Pascal のレコードなど)。
+    open var defaultInitializesDeclaredTypes: Bool { false }
+
     /// 実引数が宣言された型に当てはまるか。false を返すとその定義は選ばれない。
     open func value(_ value: MLValue, matchesDeclaredType typeName: String,
                     interpreter: MLInterpreter) -> Bool {
