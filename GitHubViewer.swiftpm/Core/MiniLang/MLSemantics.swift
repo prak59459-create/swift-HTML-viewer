@@ -136,6 +136,9 @@ open class MLSemantics {
     /// `obj.method` と書くだけで引数なし呼び出しになる言語 (Ruby / Crystal)。
     open var autoCallsZeroArgumentMembers: Bool { false }
 
+    /// `x.f(y)` を `f(x, y)` と読み替える言語 (Nim / D の UFCS)。
+    open var usesUniformFunctionCall: Bool { false }
+
     /// `value.name` の読み出し。`nil` を返すと共通処理にまかせる。
     open func member(of value: MLValue, name: String,
                      interpreter: MLInterpreter) throws -> MLValue? {

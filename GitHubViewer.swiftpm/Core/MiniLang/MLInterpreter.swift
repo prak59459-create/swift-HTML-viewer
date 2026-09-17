@@ -1429,6 +1429,11 @@ public final class MLInterpreter {
             return try callMethod(on: receiver, name: name, arguments: [],
                                   location: location)
         }
+        // UFCS: `x.len` は `len(x)`。
+        if semantics.usesUniformFunctionCall,
+           let box = globals.lookup(name), let function = box.value.asFunction {
+            return try callFunction(function, arguments: [receiver], location: location)
+        }
         throw MLError.runtime("\(location) \(semantics.typeName(of: receiver)) に \(name) はありません")
     }
 
@@ -2156,6 +2161,13 @@ public final class MLInterpreter {
            let function = stored.asFunction {
             return try callFunction(function, arguments: arguments, labels: labels,
                                     boxes: boxes, location: location)
+        }
+        // UFCS: `x.f(y)` を `f(x, y)` として呼び直す。
+        if semantics.usesUniformFunctionCall,
+           let box = globals.lookup(name), let function = box.value.asFunction {
+            return try callFunction(function, arguments: [receiver] + arguments,
+                                    labels: [nil] + labels, boxes: [nil] + boxes,
+                                    location: location)
         }
         throw MLError.runtime("\(location) \(semantics.typeName(of: receiver)) に \(name) というメソッドはありません")
     }
