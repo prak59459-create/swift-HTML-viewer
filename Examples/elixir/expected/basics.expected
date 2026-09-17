@@ -1,0 +1,24 @@
+fib: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34
+sum: 25
+squares: 25, 9, 81, 1, 49
+big: 5, 9, 7
+sorted: 1, 3, 5, 7, 9
+count: 5
+piped: 210
+-5 is negative
+0 is zero
+3 is small
+42 is large
+point: 3, 4
+name: Alice, age: 30
+keys: name, age
+upper: HELLO, ELIXIR
+length: 13
+parts: Hello|Elixir
+case: seven
+if: yes
+concat: foobar
+list: 1,2,3,4
+div: 3 rem: 2
+%{a: 1, b: 2}
+[1, :two, "three"]

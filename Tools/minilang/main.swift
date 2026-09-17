@@ -38,8 +38,12 @@ guard let source = try? String(contentsOfFile: path, encoding: .utf8) else {
     exit(2)
 }
 
+// 標準入力はファイルから流し込まれたときだけ読む。
+// (端末やパイプにつながったまま読むと、書き手が閉じるまで止まってしまう。)
 var standardInput = ""
-if isatty(0) == 0 {
+var status = stat()
+let wantsStandardInput = arguments.contains("--stdin")
+if wantsStandardInput || (fstat(0, &status) == 0 && (status.st_mode & S_IFMT) == S_IFREG) {
     let data = FileHandle.standardInput.readDataToEndOfFile()
     standardInput = String(decoding: data, as: UTF8.self)
 }
