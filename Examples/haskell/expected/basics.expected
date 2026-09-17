@@ -1,0 +1,25 @@
+fib: [0,1,1,2,3,5,8,13,21,34]
+sum: 25
+sum': 25
+squares: [25,9,81,1,49]
+big: [5,9,7]
+sorted: [1,3,5,7,9]
+reversed: [7,1,9,3,5]
+length: 5
+folded: 25
+-5 is negative
+0 is zero
+3 is small
+42 is large
+circle of radius 2.0
+rect 3.0x4.0
+area: 12.56636
+comprehension: [10,18,14]
+applyTwice: 81
+curried: [6,4,10,2,8]
+tuple: 3,4
+upper: HELLO HASKELL
+words: ["a","b","c"]
+17 div 5 = 3
+17 mod 5 = 2
+zip: [11,22,33]
