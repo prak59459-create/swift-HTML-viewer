@@ -7,6 +7,16 @@ public enum MiniJavaScript: MiniLangEngine {
     public static var languageID: String { "javascript" }
     public static var displayName: String { "内蔵 JavaScript 処理系" }
 
+    /// 構文木だけを組み立てる (実行はしない)。
+    ///
+    /// 構文木ビューアやトークン一覧など、見せるための機能から使う。
+    public static func parse(source: String,
+                             diagnostics: DiagnosticBag) throws -> MLProgram {
+        let tokens = JSLexer(source: source, diagnostics: diagnostics).tokenize()
+        return try JSParser(tokens: tokens, diagnostics: diagnostics,
+                            isTypeScript: false).parseProgram()
+    }
+
     public static func execute(source: String, input: String,
                                limits: MiniLangLimits) -> MiniLangExecution {
         MiniLangRunner.run {
@@ -43,6 +53,16 @@ public enum MiniJavaScript: MiniLangEngine {
 public enum MiniTypeScript: MiniLangEngine {
     public static var languageID: String { "typescript" }
     public static var displayName: String { "内蔵 TypeScript 処理系" }
+
+    /// 構文木だけを組み立てる (実行はしない)。
+    ///
+    /// 構文木ビューアやトークン一覧など、見せるための機能から使う。
+    public static func parse(source: String,
+                             diagnostics: DiagnosticBag) throws -> MLProgram {
+        let tokens = JSLexer(source: source, diagnostics: diagnostics).tokenize()
+        return try JSParser(tokens: tokens, diagnostics: diagnostics,
+                            isTypeScript: true).parseProgram()
+    }
 
     public static func execute(source: String, input: String,
                                limits: MiniLangLimits) -> MiniLangExecution {

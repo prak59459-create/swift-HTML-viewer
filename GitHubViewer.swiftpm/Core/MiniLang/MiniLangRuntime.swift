@@ -22,12 +22,17 @@ public struct MiniLangExecution: Equatable, Sendable {
     public var wasCancelled: Bool
     /// 時間切れになったか。
     public var timedOut: Bool
+    /// エラーが出たときの呼び出しの積み重ね。
+    public var errorStack: ErrorStackTrace?
+    /// 実行中に気づいたこと。
+    public var warnings: [RuntimeWarning]
 
     public init(parsed: Bool, diagnosticsText: String = "", errorCount: Int = 0,
                 output: String = "", runtimeError: String? = nil, exitCode: Int32 = 0,
                 steps: Int = 0, duration: TimeInterval = 0,
                 approximateMemoryBytes: Int = 0, wasCancelled: Bool = false,
-                timedOut: Bool = false) {
+                timedOut: Bool = false, errorStack: ErrorStackTrace? = nil,
+                warnings: [RuntimeWarning] = []) {
         self.parsed = parsed
         self.diagnosticsText = diagnosticsText
         self.errorCount = errorCount
@@ -39,6 +44,8 @@ public struct MiniLangExecution: Equatable, Sendable {
         self.approximateMemoryBytes = approximateMemoryBytes
         self.wasCancelled = wasCancelled
         self.timedOut = timedOut
+        self.errorStack = errorStack
+        self.warnings = warnings
     }
 
     public var succeeded: Bool { parsed && runtimeError == nil }
@@ -98,6 +105,10 @@ public struct MiniLangLimits {
     public var parseOnly: Bool
     /// 対話的に動かすときの割り込み口 (出力の途中経過と、追加の入力)。
     public var hooks: InteractiveHooks?
+    /// デバッグの設定と記録。付けると 1 文ごとに知らせが飛ぶ。
+    public var debugger: Debugger?
+    /// 実行中に気づいたことをためる先。
+    public var warnings: WarningCollector?
 
     public init(maximumSteps: Int = 5_000_000,
                 maximumOutputBytes: Int = 1 << 20,
@@ -109,7 +120,9 @@ public struct MiniLangLimits {
                 cancellation: RunCancellation? = nil,
                 fileSystem: VirtualFileSystem? = nil,
                 parseOnly: Bool = false,
-                hooks: InteractiveHooks? = nil) {
+                hooks: InteractiveHooks? = nil,
+                debugger: Debugger? = nil,
+                warnings: WarningCollector? = nil) {
         self.maximumSteps = maximumSteps
         self.maximumOutputBytes = maximumOutputBytes
         self.maximumCallDepth = maximumCallDepth
@@ -121,6 +134,8 @@ public struct MiniLangLimits {
         self.fileSystem = fileSystem
         self.parseOnly = parseOnly
         self.hooks = hooks
+        self.debugger = debugger
+        self.warnings = warnings
     }
 
     public static let `default` = MiniLangLimits()
@@ -136,11 +151,31 @@ public protocol MiniLangEngine {
     /// 表示名 ("内蔵 Go インタプリタ" など)。
     static var displayName: String { get }
     static func execute(source: String, input: String, limits: MiniLangLimits) -> MiniLangExecution
+    /// 構文木だけを組み立てる (実行はしない)。対応していなければ投げる。
+    static func parse(source: String, diagnostics: DiagnosticBag) throws -> MLProgram
 }
 
 public extension MiniLangEngine {
     static func execute(source: String) -> MiniLangExecution {
         execute(source: source, input: "", limits: .default)
+    }
+
+    /// 構文木を組み立てられない処理系のための既定。
+    static func parse(source: String, diagnostics: DiagnosticBag) throws -> MLProgram {
+        throw ParseUnavailable(languageID: languageID)
+    }
+}
+
+/// その処理系では構文木を取り出せないときのエラー。
+public struct ParseUnavailable: LocalizedError, Equatable {
+    public var languageID: String
+
+    public init(languageID: String) {
+        self.languageID = languageID
+    }
+
+    public var errorDescription: String? {
+        "\(languageID) は構文木の取り出しに対応していません。"
     }
 }
 

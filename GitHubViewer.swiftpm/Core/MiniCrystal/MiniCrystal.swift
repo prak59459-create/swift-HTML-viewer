@@ -8,6 +8,15 @@ public enum MiniCrystal: MiniLangEngine {
     public static var languageID: String { "crystal" }
     public static var displayName: String { "内蔵 Crystal 処理系" }
 
+    /// 構文木だけを組み立てる (実行はしない)。
+    ///
+    /// 構文木ビューアやトークン一覧など、見せるための機能から使う。
+    public static func parse(source: String,
+                             diagnostics: DiagnosticBag) throws -> MLProgram {
+        let tokens = CrystalLexer(source: source, diagnostics: diagnostics).tokenize()
+        return try CrystalParser(tokens: tokens, diagnostics: diagnostics).parseProgram()
+    }
+
     public static func execute(source: String, input: String,
                                limits: MiniLangLimits) -> MiniLangExecution {
         MiniLangRunner.run {

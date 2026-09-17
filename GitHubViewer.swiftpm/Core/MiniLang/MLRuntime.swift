@@ -161,6 +161,12 @@ public final class MLFunction {
         }
     }
 
+    /// Swift で書いた組み込み関数か。
+    public var isNative: Bool {
+        if case .native = body { return true }
+        return false
+    }
+
     /// `self` を束ねた複製を返す。
     public func bound(to receiver: MLValue, owner: MLClass?) -> MLFunction {
         MLFunction(body: body, closure: closure, boundSelf: receiver,

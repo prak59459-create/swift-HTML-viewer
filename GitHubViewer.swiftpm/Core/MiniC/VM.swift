@@ -103,6 +103,50 @@ public final class MiniCVM {
     private var inputPosition = 0
     private var randomState: UInt64 = 1
 
+    // MARK: - 141 / 142. 中の様子を見せる
+
+    /// いまのスタック・メモリ・呼び出しの様子を取り出す。
+    public var snapshot: VMSnapshot {
+        let instruction = programCounter < program.instructions.count
+            ? MiniCProgram.text(for: program.instructions[programCounter])
+            : "(終わり)"
+        let line = programCounter < program.lineNumbers.count
+            ? program.lineNumbers[programCounter] : 0
+
+        let slots = operandStack.reversed().enumerated().map { depth, value in
+            StackSlot(depth: depth,
+                      text: {
+                          switch value {
+                          case .integer(let number): return String(number)
+                          case .number(let number): return MLNumberFormatting.shortestStyle(number)
+                          }
+                      }(),
+                      intValue: value.int, doubleValue: value.double)
+        }
+
+        var names: [String] = []
+        for frame in frames {
+            let name = frame.functionIndex < program.functions.count
+                ? program.functions[frame.functionIndex].name : "?"
+            names.append(name)
+        }
+
+        return VMSnapshot(programCounter: programCounter, instruction: instruction,
+                          sourceLine: line, stack: slots, callStack: names,
+                          regions: memoryRegions, steps: steps)
+    }
+
+    /// メモリの区切りと、そこで使っている量。
+    public var memoryRegions: [MemoryRegion] {
+        [MemoryRegion(kind: .staticData, start: 0, size: heapBase,
+                      used: program.staticImage.count),
+         MemoryRegion(kind: .heap, start: heapBase, size: heapEnd - heapBase,
+                      used: usedHeapBytes),
+         // スタックは上から下へ伸びる。
+         MemoryRegion(kind: .stack, start: stackBase, size: stackEnd - stackBase,
+                      used: Swift.max(0, stackPointer - stackBase))]
+    }
+
     public init(program: MiniCProgram, input: String = "", limits: MiniCLimits = .default) {
         self.program = program
         self.limits = limits
@@ -624,6 +668,19 @@ public final class MiniCVM {
 
     /// ブロックの先頭 16 バイトがヘッダ (8 バイト: 全体のサイズ, 8 バイト: 使用中フラグ)。
     private static let headerSize = 16
+
+    /// いま確保されている (空きでない) ブロックの合計。
+    var usedHeapBytes: Int {
+        var total = 0
+        var address = heapBase
+        while address + MiniCVM.headerSize <= heapEnd {
+            let size = blockSize(at: address)
+            if size <= 0 { break }
+            if !blockIsFree(at: address) { total += size }
+            address += size
+        }
+        return total
+    }
 
     private func initializeHeap() {
         let size = heapEnd - heapBase

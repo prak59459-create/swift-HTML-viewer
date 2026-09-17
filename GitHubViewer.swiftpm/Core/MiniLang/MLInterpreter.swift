@@ -110,7 +110,9 @@ public final class MLInterpreter {
         MiniLangExecution(parsed: true, output: output.text, runtimeError: runtimeError,
                           exitCode: exitCode, steps: stepCount,
                           approximateMemoryBytes: approximateMemoryBytes,
-                          wasCancelled: wasCancelled, timedOut: timedOut)
+                          wasCancelled: wasCancelled, timedOut: timedOut,
+                          errorStack: runtimeError == nil ? nil : errorStack,
+                          warnings: warnings?.all ?? [])
     }
 
     /// 開始点に渡す引数。`main()` / `main(args)` / `main(argc, argv)` の
@@ -192,6 +194,133 @@ public final class MLInterpreter {
         }
         // 時計を見るのは重いので、ときどきだけ確かめる。
         if stepCount & 0x3FF == 0 { try checkClockAndCancellation() }
+    }
+
+    // MARK: - デバッグ
+
+    /// 付いていればデバッガ。
+    public var debugger: Debugger? { limits.debugger }
+    /// 付いていれば警告のためる先。
+    public var warnings: WarningCollector? { limits.warnings }
+
+    /// いま呼んでいる関数の積み重ね (134. コールスタック)。
+    private var frames: [(name: String, line: Int, column: Int)] = []
+    /// いま実行している行。
+    public private(set) var currentLine = 0
+    /// エラーが出たときのコールスタック (144)。
+    public private(set) var errorStack: ErrorStackTrace?
+
+    /// エラーが出た場所を 1 度だけ覚える。
+    func captureErrorStack(message: String, line: Int) {
+        guard errorStack == nil else { return }
+        errorStack = ErrorStackTrace(message: message, line: line, frames: callStack)
+    }
+
+    /// 関数に入るときに積む。
+    func pushFrame(name: String, location: SourceLocation) {
+        frames.append((name, location.line, location.column))
+    }
+
+    func popFrame() {
+        if !frames.isEmpty { frames.removeLast() }
+    }
+
+    /// いまのコールスタック (外側から内側の順)。
+    public var callStack: [StackFrame] {
+        var result: [StackFrame] = []
+        for (index, frame) in frames.enumerated() {
+            let inner = index + 1 < frames.count ? frames[index + 1].line : currentLine
+            result.append(StackFrame(id: index, functionName: frame.name,
+                                     line: frame.line, column: frame.column,
+                                     currentLine: inner))
+        }
+        return result
+    }
+
+    /// いま見えている変数。
+    public func visibleVariables(in environment: MLEnvironment) -> [WatchedVariable] {
+        var seen: Set<String> = []
+        var result: [WatchedVariable] = []
+        var scope: MLEnvironment? = environment
+        while let current = scope {
+            let isGlobal = current === globals
+            for name in current.localNames.sorted() {
+                guard seen.insert(name).inserted else { continue }
+                guard let box = current.lookupLocal(name) else { continue }
+                // 組み込み関数は数が多すぎるので出さない。
+                if case .function(let function) = box.value, function.isNative { continue }
+                result.append(WatchedVariable(name: name,
+                                              displayValue: semantics.display(box.value),
+                                              typeName: semantics.typeName(of: box.value),
+                                              isGlobal: isGlobal))
+            }
+            scope = current.parent
+        }
+        return result.sorted { ($0.isGlobal ? 1 : 0, $0.name) < ($1.isGlobal ? 1 : 0, $1.name) }
+    }
+
+    /// 止まっている場所で式を評価する (155)。
+    ///
+    /// その場の変数が見えるよう、止まったときの環境で評価する。
+    /// 副作用のある式もそのまま動くので、使うのは利用者の判断に任せる。
+    func evaluateForDebugger(_ text: String, in environment: MLEnvironment)
+        -> ExpressionValue {
+        guard let engine = MiniLangRegistry.engine(for: semantics.languageID) else {
+            return .failure("この言語では式の評価に対応していません。")
+        }
+        let diagnostics = DiagnosticBag(source: text)
+        let program: MLProgram
+        do {
+            program = try engine.parse(source: text, diagnostics: diagnostics)
+        } catch {
+            return .failure(diagnostics.failureIfNeeded()?.formatted
+                ?? "式を読めませんでした。")
+        }
+        if let failure = diagnostics.failureIfNeeded() {
+            return .failure(failure.formatted)
+        }
+        guard let first = program.statements.first else {
+            return .failure("式がありません。")
+        }
+        do {
+            let value: MLValue
+            switch first {
+            case .expression(let expression, _):
+                value = try evaluate(expression, in: environment)
+            case .returnStmt(let expression, _):
+                value = try expression.map { try evaluate($0, in: environment) } ?? .unit
+            default:
+                return .failure("ここには式を書いてください。")
+            }
+            return ExpressionValue(text: semantics.display(value),
+                                   typeName: semantics.typeName(of: value),
+                                   node: ValueInspector.node(for: value))
+        } catch let error as MLError {
+            return .failure(error.message)
+        } catch {
+            return .failure("\(error)")
+        }
+    }
+
+    /// 1 文ごとにデバッガへ知らせる。
+    private func notifyDebugger(_ statement: MLStmt, in environment: MLEnvironment) throws {
+        guard let debugger else { return }
+        let location = statement.location
+        currentLine = location.line
+        // 止まっているあいだだけ、その場で式を評価できるようにする。
+        debugger.evaluator = { [weak self] text in
+            self?.evaluateForDebugger(text, in: environment)
+        }
+        defer { debugger.evaluator = nil }
+        let keepGoing = debugger.willExecute(
+            line: location.line, column: location.column, depth: frames.count,
+            functionName: frames.last?.name ?? "(大域)",
+            variables: self.visibleVariables(in: environment),
+            stack: self.callStack, stepCount: stepCount)
+        if !keepGoing {
+            wasCancelled = true
+            throw MLError.limitExceeded("デバッガから実行を止めました。")
+        }
     }
 
     /// 時間切れと中断の見張り。
@@ -464,6 +593,19 @@ public final class MLInterpreter {
 
     public func execute(_ statement: MLStmt, in environment: MLEnvironment) throws {
         try tick()
+        currentLine = statement.location.line
+        if debugger != nil { try notifyDebugger(statement, in: environment) }
+        do {
+            try executeBody(statement, in: environment)
+        } catch let error as MLError {
+            // いちばん内側で気づいた時点の様子を残す (144. スタックトレース)。
+            captureErrorStack(message: error.message, line: statement.location.line)
+            throw error
+        }
+    }
+
+    private func executeBody(_ statement: MLStmt,
+                             in environment: MLEnvironment) throws {
         switch statement {
         case .noop:
             return
@@ -2048,6 +2190,13 @@ public final class MLInterpreter {
                 partialSource: MLFunction? = nil) throws -> MLValue {
         callDepth += 1
         defer { callDepth -= 1 }
+        // 上限の手前まで来たら、深い再帰かもしれないと知らせる (149)。
+        if let warnings, callDepth == limits.maximumCallDepth * 3 / 4 {
+            warnings.add(.deepRecursion,
+                         "関数呼び出しが \(callDepth) 段まで深くなりました。"
+                             + "再帰が終わらないかもしれません。",
+                         line: location.line)
+        }
         if callDepth > limits.maximumCallDepth {
             throw MLError.limitExceeded(
                 "関数呼び出しが深くなりすぎました (上限 \(limits.maximumCallDepth))。再帰が終わらないのかもしれません。")
@@ -2095,6 +2244,10 @@ public final class MLInterpreter {
                     continue
                 }
                 do {
+                    // コールスタックを積む。デバッグ表示と、
+                    // 例外が出たときのスタックトレース (144) に使う。
+                    pushFrame(name: decl.name, location: location)
+                    defer { popFrame() }
                     try hoist(clause.body, in: scope)
                     let last = try executeForValue(clause.body, in: scope)
                     // 関数型言語では最後の式が戻り値。

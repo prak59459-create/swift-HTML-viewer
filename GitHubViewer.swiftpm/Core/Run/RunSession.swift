@@ -41,7 +41,9 @@ public struct RunOptions: Equatable, Sendable {
     /// 処理系に渡す形に直す。
     public func makeLimits(cancellation: RunCancellation? = nil,
                            fileSystem: VirtualFileSystem? = nil,
-                           parseOnly: Bool = false) -> MiniLangLimits {
+                           parseOnly: Bool = false,
+                           debugger: Debugger? = nil,
+                           warnings: WarningCollector? = nil) -> MiniLangLimits {
         MiniLangLimits(maximumSteps: maximumSteps,
                        maximumOutputBytes: maximumOutputBytes,
                        maximumCallDepth: maximumCallDepth,
@@ -51,7 +53,9 @@ public struct RunOptions: Equatable, Sendable {
                        randomSeed: randomSeed,
                        cancellation: cancellation,
                        fileSystem: fileSystem ?? VirtualFileSystem(files: files),
-                       parseOnly: parseOnly)
+                       parseOnly: parseOnly,
+                       debugger: debugger,
+                       warnings: warnings ?? WarningCollector())
     }
 }
 
@@ -168,12 +172,14 @@ public enum RunSession {
     /// 動かす。
     public static func run(languageID: String, source: String,
                            options: RunOptions = .default,
-                           cancellation: RunCancellation? = nil) throws -> RunResult {
+                           cancellation: RunCancellation? = nil,
+                           debugger: Debugger? = nil) throws -> RunResult {
         guard let engine = MiniLangRegistry.engine(for: languageID) else {
             throw RunSessionError.noEngine(languageID)
         }
         let files = VirtualFileSystem(files: options.files)
-        let limits = options.makeLimits(cancellation: cancellation, fileSystem: files)
+        let limits = options.makeLimits(cancellation: cancellation, fileSystem: files,
+                                        debugger: debugger)
         let startedAt = Date()
         let clock = Date()
         var execution = engine.execute(source: source, input: options.input,

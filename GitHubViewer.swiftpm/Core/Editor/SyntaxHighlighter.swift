@@ -109,6 +109,33 @@ public enum SyntaxHighlighter {
         return scanner.scan()
     }
 
+    /// 文字列とコメントを空白に置き換えた本文。
+    ///
+    /// 行と桁の位置はそのままなので、行ごとの検査 (Lint など) に使える。
+    /// 改行は残す。
+    public static func strippingCommentsAndStrings(_ source: String,
+                                                   languageID: String?) -> String {
+        let spans = spans(for: source, languageID: languageID)
+        guard !spans.isEmpty else { return source }
+
+        var units = Array(source.utf16)
+        let space = UInt16(32)
+        let newline = UInt16(10)
+        for span in spans {
+            switch span.kind {
+            case .string, .character, .comment, .documentationComment:
+                let end = Swift.min(units.count, span.location + span.length)
+                guard span.location < end else { continue }
+                for index in span.location..<end where units[index] != newline {
+                    units[index] = space
+                }
+            default:
+                continue
+            }
+        }
+        return String(decoding: units, as: UTF16.self)
+    }
+
     // MARK: 走査
 
     private struct Scanner {

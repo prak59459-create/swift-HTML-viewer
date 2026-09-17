@@ -10,6 +10,15 @@ public enum MiniJava: MiniLangEngine {
     public static var languageID: String { "java" }
     public static var displayName: String { "内蔵 Java 処理系" }
 
+    /// 構文木だけを組み立てる (実行はしない)。
+    ///
+    /// 構文木ビューアやトークン一覧など、見せるための機能から使う。
+    public static func parse(source: String,
+                             diagnostics: DiagnosticBag) throws -> MLProgram {
+        let tokens = JavaLexer(source: source, diagnostics: diagnostics).tokenize()
+        return try JavaParser(tokens: tokens, diagnostics: diagnostics).parseProgram()
+    }
+
     public static func execute(source: String, input: String,
                                limits: MiniLangLimits) -> MiniLangExecution {
         MiniLangRunner.run {
