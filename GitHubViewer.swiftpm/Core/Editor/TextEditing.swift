@@ -261,7 +261,7 @@ public enum BracketMatcher {
 }
 
 /// 字下げの決まり。
-public struct IndentStyle: Equatable, Sendable {
+public struct IndentStyle: Equatable, Codable, Sendable {
     public var usesSpaces: Bool
     public var width: Int
 

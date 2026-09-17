@@ -532,7 +532,8 @@ public enum ArgumentParser {
 // MARK: - 103. 保存時の自動実行
 
 /// いつ自動で動かすか。
-public enum AutoRunPolicy: String, CaseIterable, Identifiable, Equatable, Sendable {
+public enum AutoRunPolicy: String, CaseIterable, Identifiable, Codable, Equatable,
+                           Sendable {
     /// 自動では動かさない。
     case never
     /// 保存したときだけ。

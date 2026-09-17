@@ -1,7 +1,7 @@
 import Foundation
 
 /// リポジトリ内の 1 つの場所 (owner/repo + ref + パス) を表す。
-public struct GitHubLocation: Equatable, Hashable {
+public struct GitHubLocation: Equatable, Hashable, Codable, Sendable {
     public var owner: String
     public var repo: String
     /// nil のときはデフォルトブランチ。

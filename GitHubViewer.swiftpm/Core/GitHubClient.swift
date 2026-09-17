@@ -4,7 +4,7 @@ import FoundationNetworking
 #endif
 
 /// ディレクトリ一覧の 1 行。
-public struct RepositoryEntry: Identifiable, Equatable {
+public struct RepositoryEntry: Identifiable, Equatable, Sendable {
     public var name: String
     public var isDirectory: Bool
     public var size: Int

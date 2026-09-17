@@ -336,7 +336,8 @@ public struct FoldedOutput: Equatable, Sendable {
 // MARK: - 117. 折り返し
 
 /// 長い行をどう見せるか。
-public enum LineWrapMode: String, CaseIterable, Identifiable, Equatable, Sendable {
+public enum LineWrapMode: String, CaseIterable, Identifiable, Codable, Equatable,
+                          Sendable {
     /// 折り返さず横に伸ばす。
     case none
     /// 画面幅で折り返す。
