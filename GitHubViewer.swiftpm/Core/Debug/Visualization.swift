@@ -164,7 +164,7 @@ public enum CallGraphBuilder {
                 for nested in decl.nestedTypes {
                     collectFunctions([.typeDecl(nested)], into: &table)
                 }
-            case .block(let body, _):
+            case .block(let body, _), .group(let body, _):
                 collectFunctions(body, into: &table)
             default:
                 continue
@@ -212,7 +212,7 @@ public enum CallGraphBuilder {
                 for item in clause.body { collectCalls(item, into: &names) }
             }
             for item in finallyBody ?? [] { collectCalls(item, into: &names) }
-        case .block(let body, _):
+        case .block(let body, _), .group(let body, _):
             for item in body { collectCalls(item, into: &names) }
         case .guardStmt(let condition, let elseBody, _):
             collectCalls(condition, into: &names)

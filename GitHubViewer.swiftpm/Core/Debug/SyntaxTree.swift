@@ -244,6 +244,10 @@ public enum SyntaxTreeBuilder {
             return node(kind: "ブロック", line: line,
                         children: body.map { statement(&counter, $0) }, counter: &counter)
 
+        case .group(let body, _):
+            return node(kind: "まとめて宣言", line: line,
+                        children: body.map { statement(&counter, $0) }, counter: &counter)
+
         case .guardStmt(let condition, let elseBody, _):
             return node(kind: "guard", line: line,
                         children: [expression(&counter, condition),

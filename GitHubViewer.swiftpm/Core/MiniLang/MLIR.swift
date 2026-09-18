@@ -223,6 +223,11 @@ public indirect enum MLStmt {
     case funcDecl(MLFunctionDecl)
     case typeDecl(MLTypeDecl)
     case block([MLStmt], SourceLocation)
+    /// 見た目のためだけのまとまり。新しいスコープは作らない。
+    ///
+    /// `int a = 1, b = 2;` のように 1 つの文から複数の宣言が生まれるときに使う。
+    /// `.block` にすると宣言がその中に閉じこもってしまう。
+    case group([MLStmt], SourceLocation)
     /// `guard cond else { ... }` (条件が偽なら else を実行して抜ける)
     case guardStmt(condition: MLExpr, elseBody: [MLStmt], SourceLocation)
     /// import / package / use など、実行に影響しない宣言。
@@ -235,7 +240,7 @@ public indirect enum MLStmt {
              .forClassic(_, _, _, _, _, let l), .forIn(_, _, _, _, _, let l),
              .matchStmt(_, _, _, let l), .breakStmt(_, let l), .continueStmt(_, let l),
              .returnStmt(_, let l), .throwStmt(_, let l), .tryStmt(_, _, _, let l),
-             .block(_, let l), .guardStmt(_, _, let l), .noop(let l):
+             .block(_, let l), .group(_, let l), .guardStmt(_, _, let l), .noop(let l):
             return l
         case .funcDecl(let decl): return decl.location
         case .typeDecl(let decl): return decl.location

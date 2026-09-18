@@ -55,6 +55,11 @@ final class GoSemantics: MLSemantics {
             return "map[" + sorted.map { "\(display($0.key.asValue)):\(display($0.value))" }
                 .joined(separator: " ") + "]"
         case .object(let object):
+            // error は Error() の中身、つまりメッセージを見せる。
+            if object.typeName == "error",
+               case .string(let message)? = object.fields[.string("message")] {
+                return message
+            }
             if let caseName = object.caseName { return caseName }
             let items = object.fields.values.map { display($0) }
             return "{" + items.joined(separator: " ") + "}"

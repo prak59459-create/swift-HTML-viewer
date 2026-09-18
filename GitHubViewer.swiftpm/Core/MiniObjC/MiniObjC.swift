@@ -464,7 +464,7 @@ final class ObjCParser: MLProfileParser {
                                           value: value, isConstant: false, location))
         } while match(",")
         if consumesEnd { consumeStatementEnd() }
-        return declarations.count == 1 ? declarations[0] : .block(declarations, location)
+        return declarations.count == 1 ? declarations[0] : .group(declarations, location)
     }
 
     override func parseForInitializerDeclaration() throws -> MLStmt? {

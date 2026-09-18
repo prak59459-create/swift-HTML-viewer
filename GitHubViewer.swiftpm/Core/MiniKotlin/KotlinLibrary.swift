@@ -54,6 +54,41 @@ enum KotlinLibrary {
         environment.define("hashMapOf", .function(.native("hashMapOf", 0...64) { context in
             .map(pairsToMap(context.arguments))
         }))
+        // `HashMap<String, Int>()` のように、型の名前で作る書き方。
+        for name in ["HashMap", "LinkedHashMap", "MutableMap", "Map"] {
+            environment.define(name, .function(.native(name, 0...64) { context in
+                .map(pairsToMap(context.arguments))
+            }))
+        }
+        for name in ["ArrayList", "MutableList", "List"] {
+            environment.define(name, .function(.native(name, 0...64) { context in
+                // 引数があれば、それを並びの中身にする。
+                if context.arguments.count == 1,
+                   case .array(let array) = context.argument(0) {
+                    return .array(MLArray(array.elements))
+                }
+                return .array(MLArray(context.arguments))
+            }))
+        }
+        for name in ["HashSet", "MutableSet", "LinkedHashSet"] {
+            environment.define(name, .function(.native(name, 0...64) { context in
+                var seen: [MLValue] = []
+                let source: [MLValue]
+                if context.arguments.count == 1,
+                   case .array(let array) = context.argument(0) {
+                    source = array.elements
+                } else {
+                    source = context.arguments
+                }
+                for value in source
+                where !seen.contains(where: {
+                    context.interpreter.semantics.areEqual($0, value)
+                }) {
+                    seen.append(value)
+                }
+                return .array(MLArray(seen))
+            }))
+        }
         environment.define("Pair", .function(.native("Pair", 2) { context in
             .tuple([context.argument(0), context.argument(1)])
         }))

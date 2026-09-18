@@ -364,7 +364,7 @@ final class GoParser: MLProfileParser {
     }
 
     /// `x := expr` / `a, b := expr`
-    private func parseShortDeclaration() throws -> MLStmt? {
+    private func parseShortDeclaration(consumesEnd: Bool = true) throws -> MLStmt? {
         guard current.kind == .identifier else { return nil }
         var offset = 0
         while peek(offset).kind == .identifier {
@@ -379,7 +379,7 @@ final class GoParser: MLProfileParser {
         try expect(":=", "短い宣言")
         var values: [MLExpr] = []
         repeat { values.append(try parseExpression()) } while match(",")
-        consumeStatementEnd()
+        if consumesEnd { consumeStatementEnd() }
 
         if names.count > 1, values.count == 1 {
             let pattern = MLPattern.tuple(names.map { $0 == "_" ? .wildcard : .binding($0) })
@@ -393,7 +393,43 @@ final class GoParser: MLProfileParser {
                                           typeName: nil, value: value,
                                           isConstant: false, location))
         }
-        return declarations.count == 1 ? declarations[0] : .block(declarations, location)
+        return declarations.count == 1 ? declarations[0] : .group(declarations, location)
+    }
+
+    /// Go の `if` は、条件の前に文を 1 つ書ける。
+    ///
+    /// `if value, err := f(); err == nil { }` のような形。
+    /// そこで作った変数は `if` の中だけに見えるので、ブロックで包む。
+    override func parseIf() throws -> MLStmt {
+        let location = current.location
+        try expect("if")
+
+        var initializer: MLStmt?
+        let saved = index
+        if let short = try parseShortDeclaration(consumesEnd: false) {
+            if match(";") { initializer = short } else { index = saved }
+        }
+
+        let condition = try parseCondition()
+        let then = try parseThenBody()
+        var otherwise: [MLStmt]?
+        let beforeElse = index
+        skipStatementSeparators()
+        if check("else") {
+            advance()
+            if check("if") {
+                otherwise = [try parseIf()]
+            } else {
+                otherwise = try parseStatementAsBlock()
+            }
+        } else {
+            index = beforeElse
+        }
+
+        let statement = MLStmt.ifStmt(condition: condition, then: then,
+                                      otherwise: otherwise, location)
+        guard let initializer else { return statement }
+        return .block([initializer, statement], location)
     }
 
     /// Go の `for` は 4 通り。
@@ -479,7 +515,7 @@ final class GoParser: MLProfileParser {
                                           value: index < values.count ? values[index] : nil,
                                           isConstant: false, location))
         }
-        return declarations.count == 1 ? declarations[0] : .block(declarations, location)
+        return declarations.count == 1 ? declarations[0] : .group(declarations, location)
     }
 
     /// `for i, v := range xs { }` / `for range xs { }`

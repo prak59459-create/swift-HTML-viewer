@@ -37,7 +37,7 @@ public struct GitHubLocation: Equatable, Hashable, Codable, Sendable {
 }
 
 /// 入力された URL を解決した結果。
-public enum GitHubTarget: Equatable, Hashable {
+public enum GitHubTarget: Equatable, Hashable, Sendable {
     /// github.com / raw.githubusercontent.com のリポジトリ上の場所。
     case repository(GitHubLocation)
     /// gist.github.com の Gist。

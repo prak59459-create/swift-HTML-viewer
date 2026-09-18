@@ -583,6 +583,8 @@ public final class MLInterpreter {
                                          label: nil, location: location, asStatement: false)
             case .block(let inner, _):
                 last = try executeForValue(inner, in: MLEnvironment(parent: environment))
+            case .group(let inner, _):
+                last = try executeForValue(inner, in: environment)
             default:
                 try execute(statement, in: environment)
                 last = .unit
@@ -729,6 +731,10 @@ public final class MLInterpreter {
 
         case .block(let statements, _):
             try execute(statements, in: MLEnvironment(parent: environment))
+
+        case .group(let statements, _):
+            // 新しいスコープは作らない。宣言はこの場所に残る。
+            try execute(statements, in: environment)
         }
     }
 
@@ -1768,7 +1774,7 @@ public final class MLInterpreter {
                 throw MLError.runtime("\(location) 辞書のキーにできない値です")
             }
             if let value = map[key] { return value }
-            if semantics.outOfBoundsIsError {
+            if semantics.missingKeyIsError {
                 throw MLError.runtime("\(location) キー \(semantics.display(index)) はありません")
             }
             return .unit

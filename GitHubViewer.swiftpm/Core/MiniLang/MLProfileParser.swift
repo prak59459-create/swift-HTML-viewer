@@ -605,7 +605,7 @@ open class MLProfileParser: MLParserBase {
                                           isConstant: isConstant, location))
         } while match(",")
         if consumesEnd { consumeStatementEnd() }
-        return declarations.count == 1 ? declarations[0] : .block(declarations, location)
+        return declarations.count == 1 ? declarations[0] : .group(declarations, location)
     }
 
     /// 変数宣言の左辺。
@@ -1532,6 +1532,12 @@ open class MLProfileParser: MLParserBase {
                 expression = .member(expression, name, isOptional: isOptional, location)
                 continue
             }
+            // `HashMap<String, Int>()` のような、呼び出しの前の型引数。
+            // 実行には関わらないので読み飛ばす。
+            if check("<"), let width = genericArgumentWidth() {
+                for _ in 0..<width { advance() }
+                continue
+            }
             if check("(") {
                 let arguments = try parseArgumentList()
                 expression = .call(callee: expression, arguments: arguments, location)
@@ -1656,6 +1662,40 @@ open class MLProfileParser: MLParserBase {
     }
 
     // MARK: 基本の式
+
+    /// いまの `<` から始まる型引数の長さ。型引数でなければ nil。
+    ///
+    /// `<` と `>` が釣り合っていて、中身が型名らしく、
+    /// 閉じたすぐ後ろが `(` のときだけ「型引数」とみなす。
+    /// こうしておけば `a < b, c > (d)` のような比較を取り違えない
+    /// ‥‥とまでは言えないが、実際のコードではまず起きない形に絞れる。
+    open func genericArgumentWidth() -> Int? {
+        guard check("<") else { return nil }
+        var offset = 1
+        var depth = 1
+        var sawIdentifier = false
+
+        while depth > 0 {
+            let token = peek(offset)
+            if token.kind == .endOfFile { return nil }
+            switch token.text {
+            case "<": depth += 1
+            case ">": depth -= 1
+            case ">>": depth -= 2          // `List<List<Int>>` の閉じ。
+            case ",", "?", "*", "[", "]", ".", "&":
+                break
+            default:
+                guard token.kind == .identifier || token.kind == .keyword else {
+                    return nil
+                }
+                sawIdentifier = true
+            }
+            offset += 1
+            if depth < 0 { return nil }
+        }
+        guard sawIdentifier, peek(offset).is("(") else { return nil }
+        return offset
+    }
 
     open func parsePrimary(stopAtBrace: Bool) throws -> MLExpr {
         let token = current

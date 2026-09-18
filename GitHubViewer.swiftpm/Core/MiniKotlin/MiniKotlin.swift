@@ -412,6 +412,8 @@ final class KotlinSemantics: MLSemantics {
     override var languageID: String { "kotlin" }
     override var displayName: String { "内蔵 Kotlin 処理系" }
     override var integerDivisionTruncatesTowardZero: Bool { true }
+    /// Kotlin の `map[key]` は、キーがなければ null を返す。
+    override var missingKeyIsError: Bool { false }
 
     override func isTruthy(_ value: MLValue) throws -> Bool {
         guard case .bool(let flag) = value.forced else {

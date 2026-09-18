@@ -33,6 +33,11 @@ open class MLSemantics {
     open var curriesByDefault: Bool { false }
     /// 添字外アクセスを実行時エラーにするか (false なら nil を返す)。
     open var outOfBoundsIsError: Bool { true }
+    /// 辞書にないキーを読んだらエラーにするか。
+    ///
+    /// Kotlin の `map[key]` のように、配列は範囲外がエラーでも
+    /// 辞書は null を返す言語があるので、別に持つ。
+    open var missingKeyIsError: Bool { outOfBoundsIsError }
 
     // MARK: 真偽値
 
